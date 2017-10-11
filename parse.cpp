@@ -103,8 +103,19 @@ void init_vertices(void) {
    vertices = (struct vertex*)calloc(nb_stops, sizeof(*vertices));
 }
 
+int hour(int v) { return v/60; }
+int minutes(int v) { return v%60; }
+string h(int v) { return _ + to_string(hour(v)) + ":" + to_string(minutes(v)); }
+
 void add_edge(int v, int dst, int travel_time, int departure_time) {
    int index = vertices[v].nb_edges;
+   for(int i = 0; i < index; i++) {
+      if(vertices[v].edges[i].dst == dst
+            && vertices[v].edges[i].departure_time == departure_time) {
+         // Ignore edge, it is already there!
+         return;
+      }
+   }
    vertices[v].nb_edges++;
    vertices[v].edges = (struct edge*)realloc(vertices[v].edges, vertices[v].nb_edges*sizeof(*vertices[v].edges));
    vertices[v].edges[index].dst = dst;
@@ -137,7 +148,9 @@ void create_trips(char *dir) {
             cout << previous_time << " " << current_time << "\n";
             continue;
          }
-         add_edge(parent->id, current->id, travel_time, current_time);
+         /*if(parent->stop_name == "Lausanne")
+            cout << "Lausanne to " << current->stop_name << " at " << h(previous_time) << " " << trip_id << " " << stop_sequence << "\n";*/
+         add_edge(parent->id, current->id, travel_time, previous_time);
       }
 
       parent = current;
@@ -147,6 +160,26 @@ void create_trips(char *dir) {
       if(nb_trips % 300000 == 0)
          cout << nb_trips << "/ 11259226 = " << (nb_trips*100/11259226) << "%\n";
    }
+}
+
+void add_connexion(Stop *dst, Source *f) {
+   for (auto it = dst->parents.begin(); it != dst->parents.end(); ++it) {
+      Source *e = *it;
+      if(e->arrival_time == f->arrival_time) {
+         if(e->travel_time <= f->travel_time) {
+            // ignore f
+         } else {
+            // found a shorter way that arrives at the same time!
+            e->travel_time = f->travel_time;
+            e->parent = f->parent;
+            dst->next = 1;
+         }
+         delete f;
+         return;
+      }
+   }
+   dst->parents.push_back(f);
+   dst->next = 1;
 }
 
 /* Get all the trajectories leaving srv, and check if it adds new possibilities to the destinations reachable from src */
@@ -173,8 +206,9 @@ void __sssp(Stop *src, int iteration) {
          }
 
          // Ignore impossible connexions
-         if(e->departure_time < parent->arrival_time)
-            break;
+         if(e->departure_time < parent->arrival_time) {
+            continue;
+         }
 
          // Time to reach destination is time already spent traveling + waiting time
          int time = parent->travel_time + (e->departure_time - parent->arrival_time);
@@ -185,7 +219,7 @@ void __sssp(Stop *src, int iteration) {
       }
 
       if(!best) {
-         //cout << "We cannot use a connexion because it is impossible to get there in time...\n";
+         //cout << "Impossible " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time) << "\n";
          continue;
       }
 
@@ -202,8 +236,15 @@ void __sssp(Stop *src, int iteration) {
 
       // Add the trajectory to the list of possible trajectories if it is close the the best (less than 60 minutes worse than best)
       if(f->travel_time < dst->best_time + 60 && f->travel_time < dst->best_time * 2) {
-         dst->parents.push_back(f);
-         dst->active = 1;
+         /*cout << "Found connexion " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
+              << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
+              << " so far " << dst->parents.size() << " trajectories " << "\n";*/
+         add_connexion(dst, f);
+      } else {
+         /*cout << "Ignoring connexion " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
+              << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
+              << " so far " << dst->parents.size() << " trajectories " << "\n";*/
+         delete f;
       }
    }
 }
@@ -212,7 +253,7 @@ void __sssp(Stop *src, int iteration) {
 void _sssp(int iterations) {
    cout << "Iteration " << iterations << "\n";
 
-   for (auto it = stops.begin(); it != stops.end(); ++it) {
+   for (auto it = stop_names.begin(); it != stop_names.end(); ++it) {
       Stop *s = it->second;
       if(s->active) {
          __sssp(s, iterations);
@@ -220,14 +261,14 @@ void _sssp(int iterations) {
    }
 
    int nb_active = 0;
-   for (auto it = stops.begin(); it != stops.end(); ++it) {
+   for (auto it = stop_names.begin(); it != stop_names.end(); ++it) {
       Stop *s = it->second;
       s->active = s->next;
       s->next = 0;
       if(s->active)
          nb_active++;
    }
-   if(nb_active && iterations < 100) // and recurse until we don't have any active vertex anymore
+   if(nb_active && iterations < 200) // and recurse until we don't have any active vertex anymore
       _sssp(iterations + 1);
 }
 
@@ -242,11 +283,16 @@ int sssp(Stop *source) {
    source->active = 1;
    _sssp(0);
 
+   std::vector<std::pair<int,Stop*>> dst;
    for (auto it = stop_names.begin(); it != stop_names.end(); ++it) {
       Stop *s = it->second;
-      if(s->best_time != -1) {
+      dst.push_back({s->best_time, s});
+   }
+   std::sort(dst.begin(), dst.end());
+   for (auto it = dst.begin(); it != dst.end(); ++it) {
+      Stop *s = it->second;
+      if(s->best_time > 0)
          cout << s->stop_name << " in " << s->best_time << " minutes\n";
-      }
    }
 }
 
