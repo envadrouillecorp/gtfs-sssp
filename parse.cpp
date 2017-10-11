@@ -24,6 +24,7 @@ struct Stop {
 
    int nb_hops;      // number of stops crossed to get there (stops, not train changes)
    int best_time;    // in minutes
+   Source *best_source;
    list<Source*> parents; // different ways and times to get there; we chose the best one for every given bus/train leaving from us
                           // the best depends on travel time up until here, and arrival time
 };
@@ -162,7 +163,7 @@ void create_trips(char *dir) {
    }
 }
 
-void add_connexion(Stop *dst, Source *f) {
+int add_connexion(Stop *dst, Source *f) {
    for (auto it = dst->parents.begin(); it != dst->parents.end(); ++it) {
       Source *e = *it;
       if(e->arrival_time == f->arrival_time) {
@@ -174,12 +175,12 @@ void add_connexion(Stop *dst, Source *f) {
             e->parent = f->parent;
             dst->next = 1;
          }
-         delete f;
-         return;
+         return 1;
       }
    }
    dst->parents.push_back(f);
    dst->next = 1;
+   return 0;
 }
 
 /* Get all the trajectories leaving srv, and check if it adds new possibilities to the destinations reachable from src */
@@ -232,6 +233,7 @@ void __sssp(Stop *src, int iteration) {
       if(dst->best_time == -1 || dst->best_time > f->travel_time) {
          dst->best_time = f->travel_time;
          dst->nb_hops = iteration;
+         dst->best_source = f;
       }
 
       // Add the trajectory to the list of possible trajectories if it is close the the best (less than 60 minutes worse than best)
@@ -239,11 +241,14 @@ void __sssp(Stop *src, int iteration) {
          /*cout << "Found connexion " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
               << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
               << " so far " << dst->parents.size() << " trajectories " << "\n";*/
-         add_connexion(dst, f);
+         int already_there = add_connexion(dst, f);
+         if(already_there && dst->best_source != f)
+            delete f;
       } else {
          /*cout << "Ignoring connexion " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
               << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
               << " so far " << dst->parents.size() << " trajectories " << "\n";*/
+         assert(dst->best_source != f);
          delete f;
       }
    }
@@ -280,6 +285,7 @@ int sssp(Stop *source) {
    source->parents.push_back(s);
    source->nb_hops = 0;
    source->best_time = 0;
+   source->best_source = NULL;
    source->active = 1;
    _sssp(0);
 
@@ -320,4 +326,15 @@ int main(int argc, char **argv) {
 
    // Find shortest travel times from origin point.
    sssp(origin);
+
+   //Test
+   cout << "-----\n";
+   string d = "Zernez, staziun";
+   Stop *dst = stop_names[d];
+   while(dst->best_source) {
+      Source *f = dst->best_source;
+      dst->best_source = NULL;
+      cout << f->parent->stop_name << " at " << h(f->arrival_time) << "\n";
+      dst = f->parent;
+   }
 }
