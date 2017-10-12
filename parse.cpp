@@ -378,6 +378,11 @@ int sssp(Stop *src) {
 void best_path(string d) {
    cout << "-----\n";
    Stop *dst = stop_names[d];
+   if(!dst) {
+      cout << "Wrong name\n";
+      return;
+   }
+
    Source *f = dst->best_source;
    while(f) {
       cout << "Arrival in " << dst->stop_name << " at " << h(f->arrival_time) << " in total " << h(f->travel_time) << "\n";
@@ -420,4 +425,7 @@ int main(int argc, char **argv) {
    //Test
    best_path("Martigny");
    best_path("Martigny, gare");
+   best_path("Ovronnaz, poste");
+   best_path("Interlaken West");
+   best_path("Cavaione");
 }
