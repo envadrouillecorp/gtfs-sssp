@@ -10,7 +10,9 @@ E.g.: ./parse . Lausanne
 
 ## Output
 
-The output will be a json file that can be used in map.html to create maps that look like lausanne01.jpg.
+The output will be a json file that can be used in map.html to create maps that look like that:
+
+![Lausanne](https://raw.githubusercontent.com/envadrouillecorp/gtfs-sssp/master/lausanne01.jpg)
 
 ## Notes
 
