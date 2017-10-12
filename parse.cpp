@@ -7,6 +7,7 @@
 #include <map>
 #include <list>
 #include "cvs.h"
+#include "deg.h"
 
 using namespace std;
 using namespace io;
@@ -20,7 +21,7 @@ struct Stop {
    int id;           // our internal id, not stop_id
    int active, next; // active in current iteration of sssp, in next iteration
    string stop_name; // E.g. "Lausanne"
-   float stop_lat,stop_lon; // Latitude, Longitude
+   double stop_lat,stop_lon; // Latitude, Longitude
 
    int nb_hops;      // number of stops crossed to get there (stops, not train changes)
    int best_time;    // in minutes
@@ -38,6 +39,7 @@ struct Source {
    Stop *parent;
    int travel_time;  // total travel time from the source, not just 1 hop
    int arrival_time; // we arrive at arrival_time (minutes)
+   int walking;      // proper connection or walking?
    Source *best;     // best possible route to here
 };
 
@@ -63,7 +65,7 @@ Stop* create_stops(char *dir, string origin) {
    in.read_header(io::ignore_extra_column, "stop_id", "stop_name", "stop_lat", "stop_lon");
 
    string stop_id, stop_name;
-   float stop_lat, stop_lon;
+   double stop_lat, stop_lon;
    while(in.read_row(stop_id, stop_name, stop_lat, stop_lon)) {
       Stop *s;
       // Multiple stop_id are used for the same station... actually one per track...
@@ -184,7 +186,24 @@ void create_transfers(char *dir) {
    }
 }
 
-int _add_connexion(Stop *dst, Source *f) {
+void create_walks(void) {
+   for (auto it1 = stop_names.begin(); it1 != stop_names.end(); ++it1) {
+      for (auto it2 = stop_names.begin(); it2 != stop_names.end(); ++it2) {
+         Stop *s1 = it1->second;
+         Stop *s2 = it2->second;
+         if(s1 == s2)
+            continue;
+         double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
+         if(dst < 100) { // less than 100m
+                         // add a walk path!
+            //cout << "Adding edge between " << s1->stop_name << " and " << s2->stop_name << "\n";
+            add_edge(s1->id, s2->id, 2, -1);
+         }
+      }
+   }
+}
+
+int _add_connection(Stop *dst, Source *f) {
    for (auto it = dst->parents.begin(); it != dst->parents.end(); ++it) {
       Source *e = *it;
       if(e->arrival_time == f->arrival_time) {
@@ -205,7 +224,7 @@ int _add_connexion(Stop *dst, Source *f) {
 }
 
 /* Add a connection to a vertex -- dst can be reached from the Source f */
-void add_connexion(Stop *dst, Source *f, int iteration) {
+void add_connection(Stop *dst, Source *f, int iteration) {
    // Did we find the best time?
    if(dst->best_time == -1 || dst->best_time > f->travel_time) {
       dst->best_time = f->travel_time;
@@ -215,15 +234,15 @@ void add_connexion(Stop *dst, Source *f, int iteration) {
 
    // Add the trajectory to the list of possible trajectories if it is close the the best (less than 60 minutes worse than best)
    if(f->travel_time < dst->best_time + 60 && f->travel_time < dst->best_time * 2) {
-      /*cout << "Found connexion " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
+      /*cout << "Found connection " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
         << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
         << " departure at " << h(best->arrival_time) << " takes " << h(f->travel_time) << " because edge travel is " << h(e->travel_time)
         << " so far " << dst->parents.size() << " trajectories " << "\n";*/
-      int already_there = _add_connexion(dst, f);
+      int already_there = _add_connection(dst, f);
       if(already_there && dst->best_source != f)
          delete f;
    } else {
-      /*cout << "Ignoring connexion " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
+      /*cout << "Ignoring connection " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
         << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
         << " so far " << dst->parents.size() << " trajectories " << "\n";*/
       assert(dst->best_source != f);
@@ -247,17 +266,22 @@ void __sssp(Stop *src, int iteration) {
          // So push the edge for all transfers that end up in src
          for (auto it = src->parents.begin(); it != src->parents.end(); ++it) {
             Source *parent = *it;
+            if(parent->parent == dst) // don't loop stupidly! Might happen because of walking back and forth between station and bus stop!
+               continue;
+            if(parent->walking) // don't walk twice, be lazy (avoid combinatory explosion)
+               continue;
             f = new Source();
             f->parent = src;
             f->arrival_time = parent->arrival_time + e->travel_time;
             f->travel_time = parent->travel_time + e->travel_time;
             f->best = parent;
-            add_connexion(dst, f, iteration);
+            f->walking = 1;
+            add_connection(dst, f, iteration);
          }
       } else {
          Source *best = NULL;
          int best_time = -1;
-         // What's the best previous connexion that allows us to use that train?
+         // What's the best previous connection that allows us to use that train?
          for (auto it = src->parents.begin(); it != src->parents.end(); ++it) {
             Source *parent = *it;
             // If we are the source of the sssp, then we are always best
@@ -267,7 +291,7 @@ void __sssp(Stop *src, int iteration) {
                break;
             }
 
-            // Ignore impossible connexions
+            // Ignore impossible connections
             if(e->departure_time < parent->arrival_time)
                continue;
 
@@ -289,7 +313,8 @@ void __sssp(Stop *src, int iteration) {
          f->arrival_time = e->departure_time + e->travel_time;
          f->travel_time = best_time + e->travel_time;
          f->best = best;
-         add_connexion(dst, f, iteration);
+         f->walking = 0;
+         add_connection(dst, f, iteration);
       }
    }
 }
@@ -324,6 +349,7 @@ int sssp(Stop *src) {
    s->travel_time = 0;
    s->arrival_time = 0;
    s->best = NULL;
+   s->walking = 0;
    src->parents.push_back(s);
 
    /* Initialize stats */
@@ -346,6 +372,17 @@ int sssp(Stop *src) {
       Stop *s = it->second;
       if(s->best_time > 0)
          cout << s->stop_name << " in " << s->best_time << " minutes\n";
+   }
+}
+
+void best_path(string d) {
+   cout << "-----\n";
+   Stop *dst = stop_names[d];
+   Source *f = dst->best_source;
+   while(f) {
+      cout << "Arrival in " << dst->stop_name << " at " << h(f->arrival_time) << " in total " << h(f->travel_time) << "\n";
+      dst = f->parent;
+      f = f->best;
    }
 }
 
@@ -374,17 +411,13 @@ int main(int argc, char **argv) {
    // Parse transferts.txt
    create_transfers(argv[1]);
 
+   // Connect all stations that are close enough to be walkable
+   create_walks();
+
    // Find shortest travel times from origin point.
    sssp(origin);
 
    //Test
-   cout << "-----\n";
-   string d = "Ovronnaz, poste";
-   Stop *dst = stop_names[d];
-   Source *f = dst->best_source;
-   while(f) {
-      cout << "Arrival in " << dst->stop_name << " at " << h(f->arrival_time) << " in total " << h(f->travel_time) << "\n";
-      dst = f->parent;
-      f = f->best;
-   }
+   best_path("Martigny");
+   best_path("Martigny, gare");
 }
