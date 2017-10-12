@@ -36,8 +36,9 @@ std::map<int,Stop*> stop_ids;       // our internale id => Stop
 /* Different ways to get to a Stop */
 struct Source {
    Stop *parent;
-   int travel_time;
-   int arrival_time;
+   int travel_time;  // total travel time from the source, not just 1 hop
+   int arrival_time; // we arrive at arrival_time (minutes)
+   Source *best;     // best possible route to here
 };
 
 /* Graph representation for shortest path computation */
@@ -100,19 +101,24 @@ int string_to_time(string time) {
       + (char_to_int(time[3])*10 + char_to_int(time[4]));
 }
 
-void init_vertices(void) {
-   vertices = (struct vertex*)calloc(nb_stops, sizeof(*vertices));
-}
-
+// int (minutes) -> xx:xx
 int hour(int v) { return v/60; }
 int minutes(int v) { return v%60; }
 string h(int v) { return _ + to_string(hour(v)) + ":" + to_string(minutes(v)); }
+
+
+void init_vertices(void) {
+   vertices = (struct vertex*)calloc(nb_stops, sizeof(*vertices));
+}
 
 void add_edge(int v, int dst, int travel_time, int departure_time) {
    int index = vertices[v].nb_edges;
    for(int i = 0; i < index; i++) {
       if(vertices[v].edges[i].dst == dst
             && vertices[v].edges[i].departure_time == departure_time) {
+         // Update the travel time if for some reason two trains depart at the same time to the same destination but one is faster
+         if(vertices[v].edges[i].travel_time > travel_time)
+            vertices[v].edges[i].travel_time = travel_time;
          // Ignore edge, it is already there!
          return;
       }
@@ -149,8 +155,6 @@ void create_trips(char *dir) {
             cout << previous_time << " " << current_time << "\n";
             continue;
          }
-         /*if(parent->stop_name == "Lausanne")
-            cout << "Lausanne to " << current->stop_name << " at " << h(previous_time) << " " << trip_id << " " << stop_sequence << "\n";*/
          add_edge(parent->id, current->id, travel_time, previous_time);
       }
 
@@ -163,7 +167,24 @@ void create_trips(char *dir) {
    }
 }
 
-int add_connexion(Stop *dst, Source *f) {
+void create_transfers(char *dir) {
+   string trip_file_name = _ + dir + "/transfers.txt";
+   io::CSVReader<3, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(trip_file_name);
+   in.read_header(io::ignore_extra_column, "from_stop_id", "to_stop_id", "min_transfer_time");
+
+   string from_stop_id, to_stop_id;
+   int min_transfer_time;
+
+   while(in.read_row(from_stop_id, to_stop_id, min_transfer_time)) {
+      Stop *parent = stops[from_stop_id];
+      Stop *dst = stops[to_stop_id];
+      if(parent == dst)
+         continue;
+      add_edge(parent->id, dst->id, min_transfer_time/60, -1);
+   }
+}
+
+int _add_connexion(Stop *dst, Source *f) {
    for (auto it = dst->parents.begin(); it != dst->parents.end(); ++it) {
       Source *e = *it;
       if(e->arrival_time == f->arrival_time) {
@@ -183,7 +204,34 @@ int add_connexion(Stop *dst, Source *f) {
    return 0;
 }
 
-/* Get all the trajectories leaving srv, and check if it adds new possibilities to the destinations reachable from src */
+/* Add a connection to a vertex -- dst can be reached from the Source f */
+void add_connexion(Stop *dst, Source *f, int iteration) {
+   // Did we find the best time?
+   if(dst->best_time == -1 || dst->best_time > f->travel_time) {
+      dst->best_time = f->travel_time;
+      dst->nb_hops = iteration;
+      dst->best_source = f;
+   }
+
+   // Add the trajectory to the list of possible trajectories if it is close the the best (less than 60 minutes worse than best)
+   if(f->travel_time < dst->best_time + 60 && f->travel_time < dst->best_time * 2) {
+      /*cout << "Found connexion " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
+        << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
+        << " departure at " << h(best->arrival_time) << " takes " << h(f->travel_time) << " because edge travel is " << h(e->travel_time)
+        << " so far " << dst->parents.size() << " trajectories " << "\n";*/
+      int already_there = _add_connexion(dst, f);
+      if(already_there && dst->best_source != f)
+         delete f;
+   } else {
+      /*cout << "Ignoring connexion " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
+        << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
+        << " so far " << dst->parents.size() << " trajectories " << "\n";*/
+      assert(dst->best_source != f);
+      delete f;
+   }
+}
+
+/* Get all the trajectories leaving src, and check if it adds new possibilities to the destinations reachable from src */
 void __sssp(Stop *src, int iteration) {
    struct edge *edges = vertices[src->id].edges;
    for(size_t i = 0; i < vertices[src->id].nb_edges; i++) {
@@ -194,62 +242,54 @@ void __sssp(Stop *src, int iteration) {
          continue;
       }
 
-      // What's the best previous connexion that gets us to that point?
-      Source *best = NULL;
-      int best_time = -1;
-      for (auto it = src->parents.begin(); it != src->parents.end(); ++it) {
-         Source *parent = *it;
-         // We are the source (no parent) so we are always the best choice
-         if(parent->parent == NULL) {
-            best = parent;
-            best_time = 0;
-            break;
+      Source *f = NULL;
+      if(e->departure_time == -1) { // we can use that edge whenever (foot/bike transfer)
+         // So push the edge for all transfers that end up in src
+         for (auto it = src->parents.begin(); it != src->parents.end(); ++it) {
+            Source *parent = *it;
+            f = new Source();
+            f->parent = src;
+            f->arrival_time = parent->arrival_time + e->travel_time;
+            f->travel_time = parent->travel_time + e->travel_time;
+            f->best = parent;
+            add_connexion(dst, f, iteration);
          }
-
-         // Ignore impossible connexions
-         if(e->departure_time < parent->arrival_time) {
-            continue;
-         }
-
-         // Time to reach destination is time already spent traveling + waiting time
-         int time = parent->travel_time + (e->departure_time - parent->arrival_time);
-         if(time < best_time || best_time == -1) {
-            best_time = time;
-            best = parent;
-         }
-      }
-
-      if(!best) {
-         //cout << "Impossible " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time) << "\n";
-         continue;
-      }
-
-      Source *f = new Source();
-      f->parent = src;
-      f->arrival_time = e->departure_time + e->travel_time;
-      f->travel_time = best_time + e->travel_time;
-
-      // Did we find the best time?
-      if(dst->best_time == -1 || dst->best_time > f->travel_time) {
-         dst->best_time = f->travel_time;
-         dst->nb_hops = iteration;
-         dst->best_source = f;
-      }
-
-      // Add the trajectory to the list of possible trajectories if it is close the the best (less than 60 minutes worse than best)
-      if(f->travel_time < dst->best_time + 60 && f->travel_time < dst->best_time * 2) {
-         /*cout << "Found connexion " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
-              << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
-              << " so far " << dst->parents.size() << " trajectories " << "\n";*/
-         int already_there = add_connexion(dst, f);
-         if(already_there && dst->best_source != f)
-            delete f;
       } else {
-         /*cout << "Ignoring connexion " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
-              << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
-              << " so far " << dst->parents.size() << " trajectories " << "\n";*/
-         assert(dst->best_source != f);
-         delete f;
+         Source *best = NULL;
+         int best_time = -1;
+         // What's the best previous connexion that allows us to use that train?
+         for (auto it = src->parents.begin(); it != src->parents.end(); ++it) {
+            Source *parent = *it;
+            // If we are the source of the sssp, then we are always best
+            if(parent->parent == NULL) { // source is the only node without parent!
+               best = parent;
+               best_time = 0;
+               break;
+            }
+
+            // Ignore impossible connexions
+            if(e->departure_time < parent->arrival_time)
+               continue;
+
+            // Time to reach destination is time already spent traveling + waiting time
+            int time = parent->travel_time + (e->departure_time - parent->arrival_time);
+            if(time < best_time || best_time == -1) {
+               best_time = time;
+               best = parent;
+            }
+         }
+
+         // It is possible that we cannot use that connection (too early to be reachable)
+         if(!best)
+            continue;
+
+         // Otherwise we found a way
+         f = new Source();
+         f->parent = src;
+         f->arrival_time = e->departure_time + e->travel_time;
+         f->travel_time = best_time + e->travel_time;
+         f->best = best;
+         add_connexion(dst, f, iteration);
       }
    }
 }
@@ -277,24 +317,31 @@ void _sssp(int iterations) {
       _sssp(iterations + 1);
 }
 
-int sssp(Stop *source) {
+int sssp(Stop *src) {
+   /* Best way to get to source is empty route */
    Source *s = new Source();
    s->parent = NULL;
    s->travel_time = 0;
    s->arrival_time = 0;
-   source->parents.push_back(s);
-   source->nb_hops = 0;
-   source->best_time = 0;
-   source->best_source = NULL;
-   source->active = 1;
+   s->best = NULL;
+   src->parents.push_back(s);
+
+   /* Initialize stats */
+   src->nb_hops = 0;
+   src->best_time = 0;
+   src->best_source = NULL;
+   src->active = 1;
+
+   /* Run */
    _sssp(0);
 
+   /* Report best times to get to all other stops */
    std::vector<std::pair<int,Stop*>> dst;
    for (auto it = stop_names.begin(); it != stop_names.end(); ++it) {
       Stop *s = it->second;
       dst.push_back({s->best_time, s});
    }
-   std::sort(dst.begin(), dst.end());
+   std::sort(dst.begin(), dst.end()); // sort by time
    for (auto it = dst.begin(); it != dst.end(); ++it) {
       Stop *s = it->second;
       if(s->best_time > 0)
@@ -324,17 +371,20 @@ int main(int argc, char **argv) {
    // Parse stop_times.txt
    create_trips(argv[1]);
 
+   // Parse transferts.txt
+   create_transfers(argv[1]);
+
    // Find shortest travel times from origin point.
    sssp(origin);
 
    //Test
    cout << "-----\n";
-   string d = "Zernez, staziun";
+   string d = "Ovronnaz, poste";
    Stop *dst = stop_names[d];
-   while(dst->best_source) {
-      Source *f = dst->best_source;
-      dst->best_source = NULL;
-      cout << f->parent->stop_name << " at " << h(f->arrival_time) << "\n";
+   Source *f = dst->best_source;
+   while(f) {
+      cout << "Arrival in " << dst->stop_name << " at " << h(f->arrival_time) << " in total " << h(f->travel_time) << "\n";
       dst = f->parent;
+      f = f->best;
    }
 }
