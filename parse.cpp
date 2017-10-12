@@ -368,11 +368,15 @@ int sssp(Stop *src) {
       dst.push_back({s->best_time, s});
    }
    std::sort(dst.begin(), dst.end()); // sort by time
+   cout << "[ ";
    for (auto it = dst.begin(); it != dst.end(); ++it) {
       Stop *s = it->second;
-      if(s->best_time > 0)
-         cout << s->stop_name << " in " << s->best_time << " minutes\n";
+      if(s->best_time > 0) {
+         //cout << s->stop_name << " in " << s->best_time << " minutes\n";
+         cout << "{ name:\"" << s->stop_name << "\", lat:" << s->stop_lat << ", lon:" << s->stop_lon << ", dur:" << s->best_time << " },\n";
+      }
    }
+   cout << "]\n";
 }
 
 void best_path(string d) {
