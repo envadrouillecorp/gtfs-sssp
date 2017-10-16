@@ -12,6 +12,7 @@
 using namespace std;
 using namespace io;
 string _ = "";
+const int simplify_results = 0; // if true remove bus stops less than 2km away from train station
 
 /* Previous stop in a trajectory */
 struct Source;
@@ -22,6 +23,8 @@ struct Stop {
    int active, next; // active in current iteration of sssp, in next iteration
    string stop_name; // E.g. "Lausanne"
    double stop_lat,stop_lon; // Latitude, Longitude
+
+   int is_train;
 
    int nb_hops;      // number of stops crossed to get there (stops, not train changes)
    int best_time;    // in minutes
@@ -42,6 +45,22 @@ struct Source {
    int walking;      // proper connection or walking?
    Source *best;     // best possible route to here
 };
+
+/* Route.txt */
+struct Route {
+   string id;
+   int is_train;
+};
+std::map<string,Route*> routes;       // route_id => Route
+
+/* Trips.txt */
+struct Trip {
+   string id;
+   int is_train;
+};
+std::map<string,Trip*> trips;       // trip_id => Route
+
+
 
 /* Graph representation for shortest path computation */
 struct edge {
@@ -82,6 +101,7 @@ Stop* create_stops(char *dir, string origin) {
          s->next = 0;
          s->nb_hops = -1;
          s->best_time = -1;
+         s->is_train = 0;
          stop_ids[s->id] = s;
          stop_names[stop_name] = s;
          nb_stops++;
@@ -93,6 +113,41 @@ Stop* create_stops(char *dir, string origin) {
    }
    return ret;
 }
+
+/* routes.txt => Route objects */
+void create_routes(char *dir) {
+//route_id,agency_id,route_short_name,route_long_name,route_desc,route_type
+   string route_file_name = _ + dir + "/routes.txt";
+   io::CSVReader<2, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(route_file_name);
+   in.read_header(io::ignore_extra_column, "route_id", "route_desc");
+
+   string route_id, route_desc;
+   while(in.read_row(route_id, route_desc)) {
+      Route *r = new Route();
+      r->id = route_id;
+      r->is_train = (route_desc != "Bus" && route_desc != "Tram");
+      routes[r->id] = r;
+   }
+}
+
+/* trips.txt => Trip objects */
+void create_trips(char *dir) {
+//route_id,agency_id,route_short_name,route_long_name,route_desc,route_type
+   string trip_file_name = _ + dir + "/trips.txt";
+   io::CSVReader<2, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(trip_file_name);
+   in.read_header(io::ignore_extra_column, "route_id", "trip_id");
+
+   string route_id, trip_id;
+   while(in.read_row(route_id, trip_id)) {
+      Trip *t = new Trip();
+      t->id = trip_id;
+      Route *r = routes[route_id];
+      t->is_train = r?r->is_train:0;
+      trips[t->id] = t;
+   }
+}
+
+
 
 int char_to_int(char v) {
    return v - '0';
@@ -133,7 +188,7 @@ void add_edge(int v, int dst, int travel_time, int departure_time) {
 }
 
 /* Build the graph of all trajectories */
-void create_trips(char *dir) {
+void create_trajectories(char *dir) {
    string trip_file_name = _ + dir + "/stop_times.txt";
    io::CSVReader<5, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(trip_file_name);
    in.read_header(io::ignore_extra_column, "trip_id", "arrival_time", "departure_time", "stop_id","stop_sequence");
@@ -149,6 +204,10 @@ void create_trips(char *dir) {
          cout << "Unknown stop " << stop_id << "\n";
          continue;
       }
+
+      Trip *t = trips[trip_id];
+      if(t && t->is_train)
+         current->is_train = 1;
 
       if(stop_sequence != 1 && parent) {
          int current_time = string_to_time(arrival_time);
@@ -201,6 +260,25 @@ void create_walks(void) {
          }
       }
    }
+}
+
+// Is a stop near to a train station?
+// If so, it will not be printed out in the results because we want to keep the number of stops low...
+int is_close_to_train(Stop *s) {
+   if(!simplify_results)
+      return 0;
+   if(s->is_train) // no train station is really close to another one... and even if it is, we want to keep all of them
+      return 0;
+
+   for (auto it = stop_names.begin(); it != stop_names.end(); ++it) {
+      Stop *other = it->second;
+      if(!other->is_train)
+         continue;
+      double dst = distanceEarth(s->stop_lat, s->stop_lon, other->stop_lat, other->stop_lon);
+      if(dst < 2000) // less than 2km from a train station
+         return 1;
+   }
+   return 0;
 }
 
 int _add_connection(Stop *dst, Source *f) {
@@ -371,7 +449,7 @@ int sssp(Stop *src) {
    cout << "[ ";
    for (auto it = dst.begin(); it != dst.end(); ++it) {
       Stop *s = it->second;
-      if(s->best_time > 0) {
+      if(s->best_time > 0 && !is_close_to_train(s)) {
          //cout << s->stop_name << " in " << s->best_time << " minutes\n";
          cout << "{ name:\"" << s->stop_name << "\", lat:" << s->stop_lat << ", lon:" << s->stop_lon << ", dur:" << s->best_time << " },\n";
       }
@@ -411,11 +489,17 @@ int main(int argc, char **argv) {
    }
    cout << "#Pathes from " << origin->stop_name << " uid " << origin->id << "\n";
 
+   // routes.txt
+   create_routes(argv[1]);
+
+   // trips.txt
+   create_trips(argv[1]);
+
    // Convert stops into a vertex array
    init_vertices();
 
    // Parse stop_times.txt
-   create_trips(argv[1]);
+   create_trajectories(argv[1]);
 
    // Parse transferts.txt
    create_transfers(argv[1]);
