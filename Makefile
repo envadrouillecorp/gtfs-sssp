@@ -1,6 +1,6 @@
 .PHONY:clean
 
-CXXFLAGS=-std=gnu++11
+CXXFLAGS=-std=gnu++11 -ggdb3
 LDLIBS=-lpthread
 
 parse:

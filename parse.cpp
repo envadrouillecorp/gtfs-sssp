@@ -12,7 +12,7 @@
 using namespace std;
 using namespace io;
 string _ = "";
-const int simplify_results = 0; // if true remove bus stops less than 2km away from train station
+const int simplify_results = 1; // if true remove bus stops less than 2km away from train station
 
 /* Previous stop in a trajectory */
 struct Source;
@@ -77,7 +77,7 @@ struct vertex *vertices;
 
 /* stops.txt => Stop objects */
 Stop* create_stops(char *dir, string origin) {
-   Stop *ret;
+   Stop *ret = NULL;
 
    string stop_file_name = _ + dir + "/stops.txt";
    io::CSVReader<4, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(stop_file_name);
@@ -86,12 +86,20 @@ Stop* create_stops(char *dir, string origin) {
    string stop_id, stop_name;
    double stop_lat, stop_lon;
    while(in.read_row(stop_id, stop_name, stop_lat, stop_lon)) {
-      Stop *s;
+      Stop *s = NULL;
       // Multiple stop_id are used for the same station... actually one per track...
       // We merge them because we don't really care about that.
       if(stop_names[stop_name]) {
          s = stop_names[stop_name];
-      } else {
+         // Unless these are really two different stops (i.e., far away)!
+         // In that case we might not merge things that are actually close because of the (id) appending, but well...
+         double dst = distanceEarth(s->stop_lat, s->stop_lon, stop_lat, stop_lon);
+         if(dst > 100) {  // if the two stops are more than 200m appart
+            stop_name += "(" + stop_id + ")";
+            s = NULL;
+         }
+      }
+      if(!s) {
          s = new Stop();
          s->stop_name = stop_name;
          s->id = nb_stops;
@@ -194,10 +202,10 @@ void create_trajectories(char *dir) {
    in.read_header(io::ignore_extra_column, "trip_id", "arrival_time", "departure_time", "stop_id","stop_sequence");
 
    string trip_id, arrival_time, departure_time, stop_id;
-   int stop_sequence, nb_trips = 0;
+   int stop_sequence = 0, nb_trips = 0;
 
-   Stop *parent;
-   int previous_time;
+   Stop *parent = NULL;
+   int previous_time = 0;
    while(in.read_row(trip_id, arrival_time, departure_time, stop_id, stop_sequence)) {
       Stop *current = stops[stop_id];
       if(!current) {
@@ -221,6 +229,9 @@ void create_trajectories(char *dir) {
 
       parent = current;
       previous_time = string_to_time(departure_time);
+      if(departure_time < arrival_time) {
+         cout << departure_time << " is before " << arrival_time << "\n";
+      }
 
       nb_trips++;
       if(nb_trips % 300000 == 0)
@@ -230,6 +241,10 @@ void create_trajectories(char *dir) {
 
 void create_transfers(char *dir) {
    string trip_file_name = _ + dir + "/transfers.txt";
+   ifstream trip_file(trip_file_name.c_str());
+   if(!trip_file.good())
+      return; // transfers file does not always exist
+
    io::CSVReader<3, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(trip_file_name);
    in.read_header(io::ignore_extra_column, "from_stop_id", "to_stop_id", "min_transfer_time");
 
@@ -393,6 +408,23 @@ void __sssp(Stop *src, int iteration) {
          f->best = best;
          f->walking = 0;
          add_connection(dst, f, iteration);
+
+         /*if(dst->stop_name == "Main St At Station St" || dst->stop_name == "Main St Opp Ferro St") {
+            //if(src->stop_name == "Main St Opp Ferro St") {
+            cout << "[DST] Adding a connection from " << src->stop_name <<  " to " << dst->stop_name << " arriving " << h(f->arrival_time) << " total " << h(f->travel_time) << " before " << h(best->travel_time) << " + wait = " << h(best_time) << " arrived at " << h(best->arrival_time) << "\n";
+               //}
+         }
+         if(src->stop_name == "Main St At Ferro St"  || src->stop_name == "Main St Opp Ferro St") {
+            cout << "[SRC] Adding a connection from " << src->stop_name <<  " to " << dst->stop_name << " arriving " << h(f->arrival_time) << " total " << h(f->travel_time) << " before " << h(best->travel_time) << " + wait = " << h(best_time) << " arrived at " << h(best->arrival_time) << "\n";
+         }
+         if((dst->stop_name == "Main St Opp Ferro St" && h(f->arrival_time) == "12:35")
+               || dst->stop_name == "Main St At Station St" && h(f->arrival_time) == "12:37") {
+            Source *f2 = f;
+            while(f2) {
+               cout << "\tArrival from " << (f2->parent?f2->parent->stop_name:"NULL") << " at " << h(f2->arrival_time) << " in total " << h(f2->travel_time) << "\n";
+               f2 = f2->best;
+            }
+         }*/
       }
    }
 }
@@ -511,9 +543,6 @@ int main(int argc, char **argv) {
    sssp(origin);
 
    //Test
-   best_path("Martigny");
-   best_path("Martigny, gare");
-   best_path("Ovronnaz, poste");
-   best_path("Interlaken West");
-   best_path("Cavaione");
+   best_path("Lithgow Station");
+   best_path("Linden Station, Platform 2");
 }
