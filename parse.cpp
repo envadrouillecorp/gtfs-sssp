@@ -576,6 +576,26 @@ void _sssp(int iterations) {
       _sssp(iterations + 1);
 }
 
+/* Trajectories already outputed */
+std::map<std::pair<string,string>,int> seen_railways;
+void output_railway(Source *f) {
+	if(!f)
+		return;
+	Stop *dst = f->child;
+	if(!dst)
+		return;
+	Stop *src = f->parent;
+	if(!src)
+		return;
+
+	if(seen_railways[{dst->stop_name,src->stop_name}])
+		return;
+
+	seen_railways[{dst->stop_name,src->stop_name}] = 1;
+	cout << "{ dst:\"" << dst->stop_name << "\", dstlat:" << dst->stop_lat << ", dstlon:" << dst->stop_lon << ", src:\"" << src->stop_name << "\", srclat:" << src->stop_lat << ", srclon:" << src->stop_lon<< ", dur:" << f->travel_time << " },\n";
+	output_railway(f->best);
+}
+
 int sssp(string origin) {
    /* Best way to get to source is empty route */
    Source *s = new Source();
@@ -604,6 +624,7 @@ int sssp(string origin) {
    /* Run */
    _sssp(0);
 
+
    /* Report best times to get to all other stops */
    std::vector<std::pair<int,Stop*>> dst;
    for (auto it = stop_ids.begin(); it != stop_ids.end(); ++it) {
@@ -616,7 +637,8 @@ int sssp(string origin) {
       Stop *s = it->second;
       if(s->best_time > 0 && !is_close_to_train(s)) {
          //cout << s->stop_name << " in " << s->best_time << " minutes\n";
-         cout << "{ name:\"" << s->stop_name << "\", lat:" << s->stop_lat << ", lon:" << s->stop_lon << ", dur:" << s->best_time << " },\n";
+         //cout << "{ name:\"" << s->stop_name << "\", lat:" << s->stop_lat << ", lon:" << s->stop_lon << ", dur:" << s->best_time << " },\n";
+	 output_railway(s->best_source);
       }
    }
    cout << "]\n";
