@@ -592,7 +592,7 @@ void output_railway(Source *f) {
 		return;
 
 	seen_railways[{dst->stop_name,src->stop_name}] = 1;
-	cout << "{ dst:\"" << dst->stop_name << "\", dstlat:" << dst->stop_lat << ", dstlon:" << dst->stop_lon << ", src:\"" << src->stop_name << "\", srclat:" << src->stop_lat << ", srclon:" << src->stop_lon<< ", dur:" << f->travel_time << " },\n";
+	cout << "{ dst:\"" << dst->stop_name << "\", dsttrain:" << dst->is_train <<", dstlat:" << dst->stop_lat << ", dstlon:" << dst->stop_lon << ", src:\"" << src->stop_name << "\", srclat:" << src->stop_lat << ", srclon:" << src->stop_lon<< ", dur:" << f->travel_time << " },\n";
 	output_railway(f->best);
 }
 
