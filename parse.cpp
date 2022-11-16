@@ -13,6 +13,8 @@
 using namespace std;
 using namespace io;
 string _ = "";
+const string chosen_day = "20221119"; // must be a saturday, search for saturday in the script to change
+const int trains_only = 0; // Only parse trains
 const int simplify_results = 1; // if true remove bus stops less than 2km away from train station
 const int exclude_frequently_cancelled_routes = 1; // likely do not exist anymore
 
@@ -72,6 +74,8 @@ std::map<string,Trip*> trips;       // trip_id => Route
 struct Calendar {
    int nb_expected;
    int nb_cancellations;
+   int saturday;
+   int cancelled_on_chosen_date;
 };
 std::map<string,Calendar*> calendar;
 
@@ -196,6 +200,8 @@ void create_expected_trips(char *dir) {
          i = new Calendar();
          i->nb_expected = 0;
          i->nb_cancellations = 0;
+	 i->saturday = (saturday == one);
+	 i->cancelled_on_chosen_date = 0;
          calendar[service_id] = i;
       }
 
@@ -208,12 +214,12 @@ void create_expected_trips(char *dir) {
 
 void create_cancelled_trips(char *dir) {
    string trip_file_name = _ + dir + "/calendar_dates.txt";
-   io::CSVReader<2, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(trip_file_name);
-   in.read_header(io::ignore_extra_column, "service_id", "exception_type");
+   io::CSVReader<3, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(trip_file_name);
+   in.read_header(io::ignore_extra_column, "service_id", "date", "exception_type");
 
    int trip_uid = 0;
-   string service_id, exception_type, two = "2";
-   while(in.read_row(service_id, exception_type)) {
+   string service_id, date, exception_type, two = "2";
+   while(in.read_row(service_id, date, exception_type)) {
       Calendar *i = calendar[service_id];
       if(!i) {
          cout << "Service " << service_id << " doesn't seem to have any valid date\n";
@@ -222,6 +228,8 @@ void create_cancelled_trips(char *dir) {
          i->nb_cancellations = 0;
          calendar[service_id] = i;
       }
+      if(date == chosen_day)
+         i->cancelled_on_chosen_date = 1;
       if(exception_type == two) // 2 == cancelled
          i->nb_cancellations++;
    }
@@ -319,8 +327,14 @@ void create_trajectories(char *dir) {
          current->is_train = 1;
 
       Calendar *info = calendar[t->service_id];
-      if(is_frequently_cancelled(info)) // Do not used cancelled trains in sssp
-         goto skip;
+      if(!t->is_train && trains_only)
+	      goto skip; 
+      if(!info->saturday)
+	      goto skip;
+      if(info->cancelled_on_chosen_date)
+	      goto skip;
+      //if(is_frequently_cancelled(info)) // Do not used cancelled trains in sssp
+      //   goto skip;
 
       if(stop_sequence != 1 && parent) {
          int current_time = string_to_time(arrival_time);
@@ -362,7 +376,8 @@ void create_transfers(char *dir) {
       Stop *dst = stops[to_stop_id];
       if(parent == dst)
          continue;
-      add_edge(parent->id, dst->id, min_transfer_time/60, -1, string(""));
+      if(dst->is_train || !trains_only)
+         add_edge(parent->id, dst->id, min_transfer_time/60, -1, string(""));
    }
 }
 
@@ -374,6 +389,8 @@ void create_walks(void) {
          Stop *s2 = it2->second;
          if(s1 == s2)
             continue;
+	 if((!s1->is_train || !s2->is_train) && trains_only)
+            continue; 
          double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
          if(dst < 100) { // less than 100m
                          // add a walk path!
@@ -635,7 +652,7 @@ int sssp(string origin) {
    cout << "[ ";
    for (auto it = dst.begin(); it != dst.end(); ++it) {
       Stop *s = it->second;
-      if(s->best_time > 0 && !is_close_to_train(s)) {
+      if(s->best_time > 0 && !is_close_to_train(s) && (!trains_only || s->is_train)) {
          //cout << s->stop_name << " in " << s->best_time << " minutes\n";
          //cout << "{ name:\"" << s->stop_name << "\", lat:" << s->stop_lat << ", lon:" << s->stop_lon << ", dur:" << s->best_time << " },\n";
 	 output_railway(s->best_source);
@@ -669,7 +686,7 @@ void best_path(string d) {
 
    Source *f = dst->best_source;
    while(f) {
-      cout << "Arrival in " << dst->stop_name << " (NAME " << (f->child?f->child->stop_name:"") << " ID " << (f->child?f->child->stop_id:"") << ") at " << h(f->arrival_time) << " in total " << h(f->travel_time) << "\n";
+      cout << "Arrival in " << dst->stop_name << " (NAME " << (f->child?f->child->stop_name:"") << " ID " << (f->child?f->child->stop_id:"") << " TRAIN " << dst->is_train <<") at " << h(f->arrival_time) << " in total " << h(f->travel_time) << "\n";
       cout << "\tDeparture from " << (f->parent?f->parent->stop_name:"") << " (ID " << (f->parent?f->parent->stop_id:"") << ") at " << h(f->departure_time) << (f->walking?"walking":"transport") << "\n";
       if(f->edge) {
          Trip *trip = trips[f->edge->trip_id];
@@ -724,4 +741,7 @@ int main(int argc, char **argv) {
    //Test
    best_path("Interlaken Ost");
    best_path("Visp");
+   best_path("Kandersteg");
+   best_path("Oey-Diemtigen");
+   best_path("Zweisimmen");
 }
