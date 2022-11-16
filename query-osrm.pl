@@ -34,7 +34,7 @@ sub get_json {
 # Foreach stop
 my $is_first = 1;
 foreach my $stop (@$stops) {
-	next if($stop->{dst} ne  "Sion");
+	#next if($stop->{dst} ne  "Sion");
 	#{ dst:"Nîmes", dstlat:43.8324, dstlon:4.36617, src:"St-Geniès-de-Malgoirès", srclat:43.9502, srclon:4.21494, dur:872 },
 	my ($url,$json,$dist,$best_dist,$best_coords);
        

@@ -13,7 +13,7 @@
 using namespace std;
 using namespace io;
 string _ = "";
-const string chosen_day = "20221119"; // must be a saturday, search for saturday in the script to change
+string chosen_day = "20221124"; // must be a saturday, search for saturday in the script to change
 const int trains_only = 0; // Only parse trains
 const int simplify_results = 1; // if true remove bus stops less than 2km away from train station
 const int exclude_frequently_cancelled_routes = 1; // likely do not exist anymore
