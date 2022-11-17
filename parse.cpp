@@ -42,6 +42,7 @@ int nb_stops = 0;
 std::map<string,Stop*> stops;       // stop_id (GTFS) => Stop
 std::map<string,std::list<Stop*>*> stop_names;  // stop_name (GTFS) => Stop
 std::map<int,Stop*> stop_ids;       // our internale id => Stop
+std::list<Stop*> stops_sorted_by_lat;
 
 /* Different ways to get to a Stop */
 struct Source {
@@ -141,18 +142,32 @@ void create_stops(char *dir) {
 
 /* routes.txt => Route objects */
 void create_routes(char *dir) {
-//route_id,agency_id,route_short_name,route_long_name,route_desc,route_type
-   string route_file_name = _ + dir + "/routes.txt";
-   io::CSVReader<2, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(route_file_name);
-   in.read_header(io::ignore_extra_column, "route_id", "route_desc");
+	//route_id,agency_id,route_short_name,route_long_name,route_desc,route_type
+	if(1) {
+		string route_file_name = _ + dir + "/routes.txt";
+		io::CSVReader<1, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(route_file_name);
+		in.read_header(io::ignore_extra_column, "route_id");
 
-   string route_id, route_desc;
-   while(in.read_row(route_id, route_desc)) {
-      Route *r = new Route();
-      r->id = route_id;
-      r->is_train = (route_desc != "B" && route_desc != "Bus" && route_desc != "Tram");
-      routes[r->id] = r;
-   }
+		string route_id, route_desc;
+		while(in.read_row(route_id)) {
+			Route *r = new Route();
+			r->id = route_id;
+			r->is_train = 1;
+			routes[r->id] = r;
+		}
+	} else {
+		string route_file_name = _ + dir + "/routes.txt";
+		io::CSVReader<2, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(route_file_name);
+		in.read_header(io::ignore_extra_column, "route_id", "route_desc");
+
+		string route_id, route_desc;
+		while(in.read_row(route_id, route_desc)) {
+			Route *r = new Route();
+			r->id = route_id;
+			r->is_train = (route_desc != "B" && route_desc != "Bus" && route_desc != "Tram");
+			routes[r->id] = r;
+		}
+	}
 }
 
 /* trips.txt => Trip objects */
@@ -310,11 +325,12 @@ void create_trajectories(char *dir) {
    in.read_header(io::ignore_extra_column, "trip_id", "arrival_time", "departure_time", "stop_id","stop_sequence");
 
    string trip_id, arrival_time, departure_time, stop_id;
-   int stop_sequence = 0, nb_trips = 0;
+   size_t stop_sequence = 0, nb_trips = 0;
 
    Stop *parent = NULL;
    int previous_time = 0;
-   int nb_trajectories = stoi(exec(_ + "wc -l \"" + trip_file_name + "\""));
+   size_t nb_trajectories = stol(exec(_ + "wc -l \"" + trip_file_name + "\""));
+   size_t skipped = 0;
    while(in.read_row(trip_id, arrival_time, departure_time, stop_id, stop_sequence)) {
       Stop *current = stops[stop_id];
       if(!current) {
@@ -340,7 +356,8 @@ void create_trajectories(char *dir) {
          int current_time = string_to_time(arrival_time);
          int travel_time = current_time - previous_time;
          if(travel_time < 0) {
-            cout << previous_time << " " << current_time << "\n";
+            //cout << previous_time << " " << current_time << "\n";
+	    skipped++;
             continue;
          }
          add_edge(parent->id, current->id, travel_time, previous_time, trip_id);
@@ -357,6 +374,7 @@ skip:
       if(nb_trips % 300000 == 0)
          cout << "Adding trajectories " << nb_trips << "/"<< nb_trajectories << " (" << (nb_trips*100/nb_trajectories) << "%)\n";
    }
+   cout << "SKIPPED " << skipped << " trajectories due to negative travel times...\n";
 }
 
 void create_transfers(char *dir) {
@@ -382,7 +400,61 @@ void create_transfers(char *dir) {
 }
 
 void create_walks(void) {
-   size_t nb_loops = stop_ids.size() * stop_ids.size(), done = 0;
+   size_t nb_loops = stop_ids.size(), done = 0, prev_percent = 0;
+
+   // Create a sorted list
+   for (auto it1 = stop_ids.begin(); it1 != stop_ids.end(); ++it1) {
+	   stops_sorted_by_lat.push_back(it1->second);
+   }
+   stops_sorted_by_lat.sort([](auto a, auto b) { return a->stop_lat < b->stop_lat; });
+
+   // For each stop, find other stops less than 100m away
+   for (auto it1 = stops_sorted_by_lat.begin(); it1 != stops_sorted_by_lat.end(); ++it1) {
+	   Stop *s1 = *it1;
+	   //cout << "Doing stop " <<  s1->stop_lat << "\n";
+	   if(!s1->is_train && trains_only)
+		   continue;
+	   if(it1 != stops_sorted_by_lat.begin()) {
+		   auto it2 = --it1;
+		   do {
+			   Stop *s2 = *it2;
+			   //cout << "\t 1 - with stop " <<  s2->stop_lat << "\n";
+			   // 1deg = 110km, so no need to go further, all stops are > 100m
+			   if(s2->stop_lat < s1->stop_lat - 0.001)
+				   break;
+			   if(!s2->is_train && trains_only)
+				   continue; 
+			   double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
+			   if(dst < 100) { // less than 100m, add a walk path!
+				   add_edge(s1->id, s2->id, 2, -1, "");
+			   }
+			   it2--;
+		   } while(it2 != stops_sorted_by_lat.begin());
+	   }
+	   if(it1 != stops_sorted_by_lat.end()) {
+		   auto it2 = ++it1;
+		   do {
+			   Stop *s2 = *it2;
+			   //cout << "\t 2 - with stop " <<  s2->stop_lat << "\n";
+			   // 1deg = 110km, so no need to go further, all stops are > 100m
+			   if(s2->stop_lat > s1->stop_lat + 0.001)
+				   break;
+			   if(!s2->is_train && trains_only)
+				   continue; 
+			   double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
+			   if(dst < 100) { // less than 100m, add a walk path!
+				   add_edge(s1->id, s2->id, 2, -1, "");
+			   }
+			   it2++;
+		   } while(it2 != stops_sorted_by_lat.end());
+	   }
+	   done++;
+	   if(done*100/nb_loops != prev_percent) {
+		   prev_percent = done*100/nb_loops;
+		   cout << "Adding walks " << done << "/" << nb_loops << " (" << (done * 100 / nb_loops) << "%)\n";
+	   }
+   }
+   /*size_t nb_loops = stop_ids.size() * stop_ids.size(), done = 0;
    for (auto it1 = stop_ids.begin(); it1 != stop_ids.end(); ++it1) {
       for (auto it2 = stop_ids.begin(); it2 != stop_ids.end(); ++it2) {
          Stop *s1 = it1->second;
@@ -400,7 +472,7 @@ void create_walks(void) {
          if(done % 1000000 == 0)
             cout << "Adding walks " << done << "/" << nb_loops << " (" << (done * 100 / nb_loops) << "%)\n";
       }
-   }
+   }*/
 }
 
 // Is a stop near to a train station?
