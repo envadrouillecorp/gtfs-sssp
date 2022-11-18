@@ -237,7 +237,7 @@ void create_cancelled_trips(char *dir) {
    while(in.read_row(service_id, date, exception_type)) {
       Calendar *i = calendar[service_id];
       if(!i) {
-         cout << "Service " << service_id << " doesn't seem to have any valid date\n";
+         cerr << "Service " << service_id << " doesn't seem to have any valid date\n";
          i = new Calendar();
          i->nb_expected = 0;
          i->nb_cancellations = 0;
@@ -331,17 +331,29 @@ void create_trajectories(char *dir) {
    int previous_time = 0;
    size_t nb_trajectories = stol(exec(_ + "wc -l \"" + trip_file_name + "\""));
    size_t skipped = 0;
+   size_t first_stop_sequence = -1;
    while(in.read_row(trip_id, arrival_time, departure_time, stop_id, stop_sequence)) {
+      /* 
+       * stop_times.txt is a list of times for a given trip
+       * But the sequence either start at 1 (swiss) or 0 (germany)...
+       * We look at the first number of the file to known which one it is...
+       */
+      if(first_stop_sequence == -1)
+         first_stop_sequence = stop_sequence;
+
+      /* Destination... */
       Stop *current = stops[stop_id];
       if(!current) {
-         cout << "Unknown stop " << stop_id << "\n";
+         cerr << "Unknown stop " << stop_id << "\n";
          continue;
       }
 
+      /* Check trip information */
       Trip *t = trips[trip_id];
       if(t && t->is_train)
          current->is_train = 1;
 
+      /* Is the train/bus circulating on the chosen day? */
       Calendar *info = calendar[t->service_id];
       if(!t->is_train && trains_only)
 	      goto skip; 
@@ -352,7 +364,7 @@ void create_trajectories(char *dir) {
       //if(is_frequently_cancelled(info)) // Do not used cancelled trains in sssp
       //   goto skip;
 
-      if(stop_sequence != 1 && parent) {
+      if(stop_sequence != first_stop_sequence && parent) {
          int current_time = string_to_time(arrival_time);
          int travel_time = current_time - previous_time;
          if(travel_time < 0) {
@@ -366,15 +378,15 @@ void create_trajectories(char *dir) {
       parent = current;
       previous_time = string_to_time(departure_time);
       if(departure_time < arrival_time) {
-         cout << departure_time << " is before " << arrival_time << "\n";
+         cerr << departure_time << " is before " << arrival_time << "\n";
       }
 
 skip:
       nb_trips++;
       if(nb_trips % 300000 == 0)
-         cout << "Adding trajectories " << nb_trips << "/"<< nb_trajectories << " (" << (nb_trips*100/nb_trajectories) << "%)\n";
+         cerr << "Adding trajectories " << nb_trips << "/"<< nb_trajectories << " (" << (nb_trips*100/nb_trajectories) << "%)\n";
    }
-   cout << "SKIPPED " << skipped << " trajectories due to negative travel times...\n";
+   cerr << "SKIPPED " << skipped << " trajectories due to negative travel times...\n";
 }
 
 void create_transfers(char *dir) {
@@ -451,7 +463,7 @@ void create_walks(void) {
 	   done++;
 	   if(done*100/nb_loops != prev_percent) {
 		   prev_percent = done*100/nb_loops;
-		   cout << "Adding walks " << done << "/" << nb_loops << " (" << (done * 100 / nb_loops) << "%)\n";
+		   cerr << "Adding walks " << done << "/" << nb_loops << " (" << (done * 100 / nb_loops) << "%)\n";
 	   }
    }
    /*size_t nb_loops = stop_ids.size() * stop_ids.size(), done = 0;
@@ -555,7 +567,7 @@ void __sssp(Stop *src, int iteration) {
       struct edge *e = &(edges->at(i));
       Stop *dst = stop_ids[e->dst];
       if(!dst) {
-         cout << "Bug\n";
+         cerr << "Bug\n";
          continue;
       }
       if(dst->best_time == 0)// don't go back to the source
@@ -644,7 +656,7 @@ void __sssp(Stop *src, int iteration) {
 
 // Do the  __sssp for all active vertices
 void _sssp(int iterations) {
-   cout << "Iteration " << iterations << "\n";
+   cerr << "Iteration " << iterations << "\n";
 
    for (auto it = stop_ids.begin(); it != stop_ids.end(); ++it) {
       Stop *s = it->second;
@@ -697,7 +709,7 @@ int sssp(string origin) {
    s->edge = NULL;
 
    if(!stop_names[origin]) {
-      cout << "Origin stop doesn't exist\n";
+      cerr << "Origin stop doesn't exist\n";
       return 0;
    }
 
@@ -736,9 +748,9 @@ int sssp(string origin) {
 }
 
 void best_path(string d) {
-   cout << "-----\n";
+   cerr << "-----\n";
    if(!stop_names[d]) {
-      cout << "Wrong name\n";
+      cerr << "Wrong name\n";
       return;
    }
 
@@ -752,19 +764,19 @@ void best_path(string d) {
          dst = i;
    }
    if(!dst) {
-      cout << "Stop is not reachable\n";
+      cerr << "Stop is not reachable\n";
       return;
    }
 
    Source *f = dst->best_source;
    while(f) {
-      cout << "Arrival in " << dst->stop_name << " (NAME " << (f->child?f->child->stop_name:"") << " ID " << (f->child?f->child->stop_id:"") << " TRAIN " << dst->is_train <<") at " << h(f->arrival_time) << " in total " << h(f->travel_time) << "\n";
-      cout << "\tDeparture from " << (f->parent?f->parent->stop_name:"") << " (ID " << (f->parent?f->parent->stop_id:"") << ") at " << h(f->departure_time) << (f->walking?"walking":"transport") << "\n";
+      cerr << "Arrival in " << dst->stop_name << " (NAME " << (f->child?f->child->stop_name:"") << " ID " << (f->child?f->child->stop_id:"") << " TRAIN " << dst->is_train <<") at " << h(f->arrival_time) << " in total " << h(f->travel_time) << "\n";
+      cerr << "\tDeparture from " << (f->parent?f->parent->stop_name:"") << " (ID " << (f->parent?f->parent->stop_id:"") << ") at " << h(f->departure_time) << (f->walking?"walking":"transport") << "\n";
       if(f->edge) {
          Trip *trip = trips[f->edge->trip_id];
          if(trip) {
             Calendar *info = calendar[trip->service_id];
-            cout << "\tUsing trip_id " << (f->edge->trip_id) << " cancelled " << (info?info->nb_cancellations:-1) << "/"  << (info?info->nb_expected:-1) << " trips\n";
+            cerr << "\tUsing trip_id " << (f->edge->trip_id) << " cancelled " << (info?info->nb_cancellations:-1) << "/"  << (info?info->nb_expected:-1) << " trips\n";
          }
       }
       dst = f->parent;
@@ -815,5 +827,5 @@ int main(int argc, char **argv) {
    best_path("Visp");
    best_path("Kandersteg");
    best_path("Oey-Diemtigen");
-   best_path("Zweisimmen");
+   best_path("Bantzenheim");
 }
