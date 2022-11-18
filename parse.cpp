@@ -143,30 +143,17 @@ void create_stops(char *dir) {
 /* routes.txt => Route objects */
 void create_routes(char *dir) {
 	//route_id,agency_id,route_short_name,route_long_name,route_desc,route_type
-	if(1) {
-		string route_file_name = _ + dir + "/routes.txt";
-		io::CSVReader<1, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(route_file_name);
-		in.read_header(io::ignore_extra_column, "route_id");
+	string route_file_name = _ + dir + "/routes.txt";
+	io::CSVReader<2, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(route_file_name);
+	in.read_header(io::ignore_extra_column | io::ignore_missing_column, "route_id", "route_desc");
 
-		string route_id, route_desc;
-		while(in.read_row(route_id)) {
-			Route *r = new Route();
-			r->id = route_id;
-			r->is_train = 1;
-			routes[r->id] = r;
-		}
-	} else {
-		string route_file_name = _ + dir + "/routes.txt";
-		io::CSVReader<2, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(route_file_name);
-		in.read_header(io::ignore_extra_column, "route_id", "route_desc");
-
-		string route_id, route_desc;
-		while(in.read_row(route_id, route_desc)) {
-			Route *r = new Route();
-			r->id = route_id;
-			r->is_train = (route_desc != "B" && route_desc != "Bus" && route_desc != "Tram");
-			routes[r->id] = r;
-		}
+	string route_id, route_desc;
+	while(in.read_row(route_id, route_desc)) {
+		Route *r = new Route();
+		cout << route_id << " " << route_desc << "..\n";
+		r->id = route_id;
+		r->is_train = (route_desc != "B" && route_desc != "Bus" && route_desc != "Tram");
+		routes[r->id] = r;
 	}
 }
 
