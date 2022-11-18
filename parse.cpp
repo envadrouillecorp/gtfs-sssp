@@ -332,6 +332,7 @@ void create_trajectories(char *dir) {
    size_t nb_trajectories = stol(exec(_ + "wc -l \"" + trip_file_name + "\""));
    size_t skipped = 0;
    size_t first_stop_sequence = -1;
+   string last_trip_id = "";
    while(in.read_row(trip_id, arrival_time, departure_time, stop_id, stop_sequence)) {
       /* 
        * stop_times.txt is a list of times for a given trip
@@ -340,6 +341,12 @@ void create_trajectories(char *dir) {
        */
       if(first_stop_sequence == -1)
          first_stop_sequence = stop_sequence;
+      /* And, just in case, also reset it when we change trip id
+       * to avoid bugs when merging GTFS from different countries... */
+      if(trip_id != last_trip_id) {
+         first_stop_sequence = stop_sequence;
+	 last_trip_id = trip_id;
+      }
 
       /* Destination... */
       Stop *current = stops[stop_id];
