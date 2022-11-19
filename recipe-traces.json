@@ -1,0 +1,10 @@
+{
+"version": 1,
+"layers": {
+"swiss-gpx": {
+"source": "mapbox://tileset-source/joelop/gpx",
+"minzoom": 1,
+"maxzoom": 11
+}
+}
+}

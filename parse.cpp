@@ -13,7 +13,7 @@
 using namespace std;
 using namespace io;
 string _ = "";
-string chosen_day = "20221124"; // must be a saturday, search for saturday in the script to change
+string chosen_day = "20221124"; // YYYYmmdd
 const int trains_only = 1; // Only parse trains
 const int simplify_results = 1; // if true remove bus stops less than 2km away from train station
 const int exclude_frequently_cancelled_routes = 1; // likely do not exist anymore
@@ -71,13 +71,14 @@ struct Trip {
 };
 std::map<string,Trip*> trips;       // trip_id => Route
 
-/* Calendar_dates.txt  */
+/* Calendar.txt & calendar_dates.txt  */
 struct Calendar {
    int nb_expected;
    int nb_cancellations;
-   int saturday;
-   int cancelled_on_chosen_date;
+   int scheduled_on_chosen_date; // is it scheduled on the chosen day?
+   int cancelled_on_chosen_date; // is it exceptionally cancelled on chosen day?
 };
+static int no_calendar_file = 0;
 std::map<string,Calendar*> calendar;
 
 
@@ -145,14 +146,14 @@ void create_routes(char *dir) {
 	//route_id,agency_id,route_short_name,route_long_name,route_desc,route_type
 	string route_file_name = _ + dir + "/routes.txt";
 	io::CSVReader<2, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(route_file_name);
-	in.read_header(io::ignore_extra_column | io::ignore_missing_column, "route_id", "route_desc");
+	in.read_header(io::ignore_extra_column, "route_id", "route_type");
 
-	string route_id, route_desc;
-	while(in.read_row(route_id, route_desc)) {
+	int route_type;
+	string route_id;
+	while(in.read_row(route_id, route_type)) {
 		Route *r = new Route();
-		cout << route_id << " " << route_desc << "..\n";
 		r->id = route_id;
-		r->is_train = (route_desc != "B" && route_desc != "Bus" && route_desc != "Tram");
+		r->is_train = (route_type == 2) || (route_type >= 100 && route_type < 200);
 		routes[r->id] = r;
 	}
 }
@@ -191,6 +192,25 @@ int nb_days_between(string start, string end) {
 void create_expected_trips(char *dir) {
    //service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
    string trip_file_name = _ + dir + "/calendar.txt";
+   ifstream trip_file(trip_file_name.c_str());
+   if(!trip_file.good()) {
+	   no_calendar_file = 1;
+	   return; // calendar file does not always exist
+   }
+
+   /* What is the weekday of the chosen date?*/
+   int day;
+   struct tm tm;
+   memset(&tm, 0, sizeof(tm));
+   if (strptime(chosen_day.c_str(), "%Y%m%d", &tm) != NULL) {
+      time_t t = mktime(&tm);
+      day = localtime(&t)->tm_wday;
+      cerr << "Checking trips that happen on the " << chosen_day << " (which is a " << day << " -- 0 = Sunday, 1 = Monday, etc.)\n";
+   } else {
+      cerr << "Chosen date " << chosen_day << " is not a valid date.\n";
+      exit(-1);
+   }
+
    io::CSVReader<10, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(trip_file_name);
    in.read_header(io::ignore_extra_column, "service_id", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "start_date", "end_date");
 
@@ -202,7 +222,32 @@ void create_expected_trips(char *dir) {
          i = new Calendar();
          i->nb_expected = 0;
          i->nb_cancellations = 0;
-	 i->saturday = (saturday == one);
+	 switch(day) {
+		 case 0:
+			i->scheduled_on_chosen_date = (sunday == one);
+			break;
+		 case 1:
+			i->scheduled_on_chosen_date = (monday == one);
+			break;
+		 case 2:
+			i->scheduled_on_chosen_date = (tuesday == one);
+			break;
+		 case 3:
+			i->scheduled_on_chosen_date = (wednesday == one);
+			break;
+		 case 4:
+			i->scheduled_on_chosen_date = (thursday == one);
+			break;
+		 case 5:
+			i->scheduled_on_chosen_date = (friday == one);
+			break;
+		 case 6:
+			i->scheduled_on_chosen_date = (saturday == one);
+			break;
+		 default:
+			cerr << "Day > 6??\n";
+			exit(-1);
+	 }
 	 i->cancelled_on_chosen_date = 0;
          calendar[service_id] = i;
       }
@@ -214,26 +259,50 @@ void create_expected_trips(char *dir) {
 }
 
 
+std::string exec(string cmd) {
+    std::array<char, 128> buffer;
+    std::string result;
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+    if (!pipe) {
+        throw std::runtime_error("popen() failed!");
+    }
+    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+        result += buffer.data();
+    }
+    return result;
+}
+
 void create_cancelled_trips(char *dir) {
    string trip_file_name = _ + dir + "/calendar_dates.txt";
    io::CSVReader<3, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(trip_file_name);
    in.read_header(io::ignore_extra_column, "service_id", "date", "exception_type");
 
    int trip_uid = 0;
-   string service_id, date, exception_type, two = "2";
+   string service_id, date, exception_type, one = "1", two = "2";
+   size_t nb_exceptions = stol(exec(_ + "wc -l \"" + trip_file_name + "\"")), done = 0;
    while(in.read_row(service_id, date, exception_type)) {
       Calendar *i = calendar[service_id];
       if(!i) {
-         cerr << "Service " << service_id << " doesn't seem to have any valid date\n";
+	      if(!no_calendar_file)
+		      cerr << "Service " << service_id << " doesn't seem to have any valid date\n";
          i = new Calendar();
          i->nb_expected = 0;
          i->nb_cancellations = 0;
+         i->scheduled_on_chosen_date = 0;
+         i->cancelled_on_chosen_date = 0;
          calendar[service_id] = i;
       }
-      if(date == chosen_day)
-         i->cancelled_on_chosen_date = 1;
+      if(date == chosen_day) {
+	 if(exception_type == two)
+		 i->cancelled_on_chosen_date = 1;
+	 else if(exception_type == one)
+		 i->scheduled_on_chosen_date = 1;
+      }
       if(exception_type == two) // 2 == cancelled
          i->nb_cancellations++;
+      done++;
+      if(done % 50000 == 0)
+	      cerr << "Adding exceptions " << done << "/" << nb_exceptions << " (" << (done*100/nb_exceptions) << "%)\n";
    }
 
 
@@ -292,19 +361,6 @@ int is_frequently_cancelled(Calendar *c) {
    return exclude_frequently_cancelled_routes && c && (c->nb_cancellations >= c->nb_expected*50/100);
 }
 
-std::string exec(string cmd) {
-    std::array<char, 128> buffer;
-    std::string result;
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
-    if (!pipe) {
-        throw std::runtime_error("popen() failed!");
-    }
-    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
-        result += buffer.data();
-    }
-    return result;
-}
-
 /* Build the graph of all trajectories */
 void create_trajectories(char *dir) {
    string trip_file_name = _ + dir + "/stop_times.txt";
@@ -349,9 +405,11 @@ void create_trajectories(char *dir) {
 
       /* Is the train/bus circulating on the chosen day? */
       Calendar *info = calendar[t->service_id];
+      if(!info)
+	      goto skip;
       if(!t->is_train && trains_only)
 	      goto skip; 
-      if(!info->saturday)
+      if(!info->scheduled_on_chosen_date)
 	      goto skip;
       if(info->cancelled_on_chosen_date)
 	      goto skip;
@@ -420,11 +478,12 @@ void create_walks(void) {
 	   //cout << "Doing stop " <<  s1->stop_lat << "\n";
 	   if(!s1->is_train && trains_only)
 		   continue;
-	   if(it1 != stops_sorted_by_lat.begin()) {
-		   auto it2 = --it1;
+	   auto it2 = it1;
+	   it2--;
+	   if(it2 != stops_sorted_by_lat.begin()) {
 		   do {
 			   Stop *s2 = *it2;
-			   //cout << "\t 1 - with stop " <<  s2->stop_lat << "\n";
+			   //cout << "\t 1 - with stop " <<  s2->stop_lat << " train " << s2->is_train << "\n";
 			   // 1deg = 110km, so no need to go further, all stops are > 100m
 			   if(s2->stop_lat < s1->stop_lat - 0.001)
 				   break;
@@ -434,11 +493,11 @@ void create_walks(void) {
 			   if(dst < 100) { // less than 100m, add a walk path!
 				   add_edge(s1->id, s2->id, 2, -1, "");
 			   }
-			   it2--;
-		   } while(it2 != stops_sorted_by_lat.begin());
+		   } while(--it2 != stops_sorted_by_lat.begin());
 	   }
-	   if(it1 != stops_sorted_by_lat.end()) {
-		   auto it2 = ++it1;
+	   it2 = it1;
+	   it2++;
+	   if(it2 != stops_sorted_by_lat.end()) {
 		   do {
 			   Stop *s2 = *it2;
 			   //cout << "\t 2 - with stop " <<  s2->stop_lat << "\n";
@@ -451,8 +510,7 @@ void create_walks(void) {
 			   if(dst < 100) { // less than 100m, add a walk path!
 				   add_edge(s1->id, s2->id, 2, -1, "");
 			   }
-			   it2++;
-		   } while(it2 != stops_sorted_by_lat.end());
+		   } while(++it2 != stops_sorted_by_lat.end());
 	   }
 	   done++;
 	   if(done*100/nb_loops != prev_percent) {
