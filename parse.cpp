@@ -723,7 +723,7 @@ int sssp(string origin) {
    s->edge = NULL;
 
    if(!stop_names[origin]) {
-      cerr << "Origin stop doesn't exist\n";
+      cerr << "Origin stop '" << origin << "' doesn't exist\n";
       return 0;
    }
 

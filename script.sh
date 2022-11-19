@@ -4,11 +4,12 @@ export MAPBOX_ACCESS_TOKEN=""
 export mapbox_username=blepers
 
 city="Neuchâtel"
+date=20221119
 gtfs_dir="./swiss"
 tileset_id="swiss-neuch"
 
 echo "Parsing GTFS...\n";
-./parse ${gtfs_dir} ${city} 20221119 0 > ${tileset_id}.json
+./parse "${gtfs_dir}" "${city}" "${date}" 0 > ${tileset_id}.json
 
 echo "Getting the shape of the railways (may take a long time)...\n";
 ./query-osrm.pl ${tileset_id}.json > ${tileset_id}-rails.geojson
