@@ -470,7 +470,7 @@ void create_walks(void) {
       // Find other stops with a lower latitude (but not too far)
       auto it2 = it1;
       it2--;
-      if(it2 != stops_sorted_by_lat.begin()) {
+      if(it1 != stops_sorted_by_lat.begin()) {
          do {
             Stop *s2 = *it2;
             //cout << "\t 1 - with stop " <<  s2->stop_lat << " train " << s2->is_train << "\n";
@@ -483,13 +483,13 @@ void create_walks(void) {
             if(dst < 100) { // less than 100m, add a walk path!
                add_edge(s1->id, s2->id, 2, -1, "");
             }
-         } while(--it2 != stops_sorted_by_lat.begin());
+         } while(it2-- != stops_sorted_by_lat.begin());
       }
 
       // And above us (but not too far)
       it2 = it1;
       it2++;
-      if(it2 != stops_sorted_by_lat.end()) {
+      if(it1 != stops_sorted_by_lat.end() && it2 != stops_sorted_by_lat.end()) {
          do {
             Stop *s2 = *it2;
             //cout << "\t 2 - with stop " <<  s2->stop_lat << "\n";
@@ -707,7 +707,7 @@ void output_stop(Source *f) {
       return;
 
    seen_stops[{dst->stop_name,src->stop_name}] = 1;
-   cout << "{ dst:\"" << dst->stop_name << "\", dsttrain:" << dst->is_train <<", dstlat:" << dst->stop_lat << ", dstlon:" << dst->stop_lon << ", src:\"" << src->stop_name << "\", srclat:" << src->stop_lat << ", srclon:" << src->stop_lon<< ", dur:" << f->travel_time << " },\n";
+   cout << "{ dst:\"" << dst->stop_name << "\", dsttrain:" << dst->is_train <<", dstlat:" << dst->stop_lat << ", dstlon:" << dst->stop_lon << ", src:\"" << src->stop_name << "\", srctrain:" << src->is_train << ", srclat:" << src->stop_lat << ", srclon:" << src->stop_lon<< ", dur:" << f->travel_time << " },\n";
    output_stop(f->best); // Probably uneeded
 }
 
