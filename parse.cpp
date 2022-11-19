@@ -12,11 +12,12 @@
 
 using namespace std;
 using namespace io;
+
 string _ = "";
-string chosen_day = "20221124"; // YYYYmmdd
-const int trains_only = 1; // Only parse trains
-const int simplify_results = 1; // if true remove bus stops less than 2km away from train station
-const int exclude_frequently_cancelled_routes = 1; // likely do not exist anymore
+string chosen_day = ""; // YYYYmmdd
+int trains_only = 0; // Only parse trains
+const int simplify_results = 1; // if true remove bus stops less than 2km away from train station in the output
+const int exclude_frequently_cancelled_routes = 0; // exclude all routes cancelled more than 50\% of the time
 
 /* Previous stop in a trajectory, and used edge in the graph */
 struct Source;
@@ -79,7 +80,7 @@ struct Calendar {
    int cancelled_on_chosen_date; // is it exceptionally cancelled on chosen day?
 };
 static int no_calendar_file = 0;
-std::map<string,Calendar*> calendar;
+std::map<string,Calendar*> calendar; // trip_id => calendar
 
 
 /* Graph representation for shortest path computation */
@@ -96,6 +97,20 @@ struct vertex {
 struct vertex *vertices;
 
 
+/* Helper function to execute a command and get its output as a string */
+std::string exec(string cmd) {
+   std::array<char, 128> buffer;
+   std::string result;
+   std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+   if (!pipe) {
+      throw std::runtime_error("popen() failed!");
+   }
+   while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+      result += buffer.data();
+   }
+   return result;
+}
+
 /* stops.txt => Stop objects */
 void create_stops(char *dir) {
    string stop_file_name = _ + dir + "/stops.txt";
@@ -105,62 +120,47 @@ void create_stops(char *dir) {
    string stop_id, stop_name;
    double stop_lat, stop_lon;
    while(in.read_row(stop_id, stop_name, stop_lat, stop_lon)) {
-      Stop *s = NULL;
-      // Multiple stop_id are used for the same station... actually one per track...
-      // We merge them because we don't really care about that.
-      /*if(stop_names[stop_name]) {
-         s = stop_names[stop_name];
-         // Unless these are really two different stops (i.e., far away)!
-         // In that case we might not merge things that are actually close because of the (id) appending, but well...
-         double dst = distanceEarth(s->stop_lat, s->stop_lon, stop_lat, stop_lon);
-         if(dst > 100) {  // if the two stops are more than 200m appart
-            stop_name += "(" + stop_id + ")";
-            s = NULL;
-         }
-      }*/
-      if(!stop_names[stop_name]) {
+      Stop *s = new Stop();
+      s = new Stop();
+      s->stop_name = stop_name;
+      s->id = nb_stops;
+      s->stop_lat = stop_lat;
+      s->stop_lon = stop_lon;
+      s->active = 0;
+      s->next = 0;
+      s->nb_hops = -1;
+      s->best_time = -1;
+      s->is_train = 0;
+      s->stop_id = stop_id;
+      stop_ids[s->id] = s;
+      if(!stop_names[stop_name]) 
          stop_names[stop_name] = new std::list<Stop*>();
-      }
-      if(!s) {
-         s = new Stop();
-         s->stop_name = stop_name;
-         s->id = nb_stops;
-         s->stop_lat = stop_lat;
-         s->stop_lon = stop_lon;
-         s->active = 0;
-         s->next = 0;
-         s->nb_hops = -1;
-         s->best_time = -1;
-         s->is_train = 0;
-         s->stop_id = stop_id;
-         stop_ids[s->id] = s;
-         stop_names[stop_name]->push_back(s);
-         nb_stops++;
-      }
+      stop_names[stop_name]->push_back(s);
+      nb_stops++;
       stops[stop_id] = s;
    }
 }
 
 /* routes.txt => Route objects */
 void create_routes(char *dir) {
-	//route_id,agency_id,route_short_name,route_long_name,route_desc,route_type
-	string route_file_name = _ + dir + "/routes.txt";
-	io::CSVReader<2, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(route_file_name);
-	in.read_header(io::ignore_extra_column, "route_id", "route_type");
+   //route_id,agency_id,route_short_name,route_long_name,route_desc,route_type
+   string route_file_name = _ + dir + "/routes.txt";
+   io::CSVReader<2, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(route_file_name);
+   in.read_header(io::ignore_extra_column, "route_id", "route_type");
 
-	int route_type;
-	string route_id;
-	while(in.read_row(route_id, route_type)) {
-		Route *r = new Route();
-		r->id = route_id;
-		r->is_train = (route_type == 2) || (route_type >= 100 && route_type < 200);
-		routes[r->id] = r;
-	}
+   int route_type;
+   string route_id;
+   while(in.read_row(route_id, route_type)) {
+      Route *r = new Route();
+      r->id = route_id;
+      r->is_train = (route_type == 2) || (route_type >= 100 && route_type < 200);
+      routes[r->id] = r;
+   }
 }
 
 /* trips.txt => Trip objects */
 void create_trips(char *dir) {
-//route_id,agency_id,route_short_name,route_long_name,route_desc,route_type
+   //route_id,agency_id,route_short_name,route_long_name,route_desc,route_type
    string trip_file_name = _ + dir + "/trips.txt";
    io::CSVReader<3, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(trip_file_name);
    in.read_header(io::ignore_extra_column, "route_id", "service_id", "trip_id");
@@ -194,8 +194,8 @@ void create_expected_trips(char *dir) {
    string trip_file_name = _ + dir + "/calendar.txt";
    ifstream trip_file(trip_file_name.c_str());
    if(!trip_file.good()) {
-	   no_calendar_file = 1;
-	   return; // calendar file does not always exist
+      no_calendar_file = 1;
+      return; // calendar file does not always exist
    }
 
    /* What is the weekday of the chosen date?*/
@@ -222,33 +222,33 @@ void create_expected_trips(char *dir) {
          i = new Calendar();
          i->nb_expected = 0;
          i->nb_cancellations = 0;
-	 switch(day) {
-		 case 0:
-			i->scheduled_on_chosen_date = (sunday == one);
-			break;
-		 case 1:
-			i->scheduled_on_chosen_date = (monday == one);
-			break;
-		 case 2:
-			i->scheduled_on_chosen_date = (tuesday == one);
-			break;
-		 case 3:
-			i->scheduled_on_chosen_date = (wednesday == one);
-			break;
-		 case 4:
-			i->scheduled_on_chosen_date = (thursday == one);
-			break;
-		 case 5:
-			i->scheduled_on_chosen_date = (friday == one);
-			break;
-		 case 6:
-			i->scheduled_on_chosen_date = (saturday == one);
-			break;
-		 default:
-			cerr << "Day > 6??\n";
-			exit(-1);
-	 }
-	 i->cancelled_on_chosen_date = 0;
+         switch(day) {
+            case 0:
+               i->scheduled_on_chosen_date = (sunday == one);
+               break;
+            case 1:
+               i->scheduled_on_chosen_date = (monday == one);
+               break;
+            case 2:
+               i->scheduled_on_chosen_date = (tuesday == one);
+               break;
+            case 3:
+               i->scheduled_on_chosen_date = (wednesday == one);
+               break;
+            case 4:
+               i->scheduled_on_chosen_date = (thursday == one);
+               break;
+            case 5:
+               i->scheduled_on_chosen_date = (friday == one);
+               break;
+            case 6:
+               i->scheduled_on_chosen_date = (saturday == one);
+               break;
+            default:
+               cerr << "Day > 6??\n";
+               exit(-1);
+         }
+         i->cancelled_on_chosen_date = 0;
          calendar[service_id] = i;
       }
 
@@ -256,20 +256,6 @@ void create_expected_trips(char *dir) {
       int nb_valid_days = nb_days_between(start_date, end_date);
       i->nb_expected = nb_days_per_week * (nb_valid_days/7);
    }
-}
-
-
-std::string exec(string cmd) {
-    std::array<char, 128> buffer;
-    std::string result;
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
-    if (!pipe) {
-        throw std::runtime_error("popen() failed!");
-    }
-    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
-        result += buffer.data();
-    }
-    return result;
 }
 
 void create_cancelled_trips(char *dir) {
@@ -283,8 +269,8 @@ void create_cancelled_trips(char *dir) {
    while(in.read_row(service_id, date, exception_type)) {
       Calendar *i = calendar[service_id];
       if(!i) {
-	      if(!no_calendar_file)
-		      cerr << "Service " << service_id << " doesn't seem to have any valid date\n";
+         if(!no_calendar_file)
+            cerr << "Service " << service_id << " doesn't seem to have any valid date\n";
          i = new Calendar();
          i->nb_expected = 0;
          i->nb_cancellations = 0;
@@ -293,16 +279,18 @@ void create_cancelled_trips(char *dir) {
          calendar[service_id] = i;
       }
       if(date == chosen_day) {
-	 if(exception_type == two)
-		 i->cancelled_on_chosen_date = 1;
-	 else if(exception_type == one)
-		 i->scheduled_on_chosen_date = 1;
+         // Some GTFS datasets have a calendar.txt (expected schedule) with exceptions...
+         if(exception_type == two)
+            i->cancelled_on_chosen_date = 1;
+         // Some GTFS datasets don't have a calandar.txt and all running trains are listed as exeptions...
+         else if(exception_type == one)
+            i->scheduled_on_chosen_date = 1;
       }
       if(exception_type == two) // 2 == cancelled
          i->nb_cancellations++;
       done++;
       if(done % 50000 == 0)
-	      cerr << "Adding exceptions " << done << "/" << nb_exceptions << " (" << (done*100/nb_exceptions) << "%)\n";
+         cerr << "Adding exceptions " << done << "/" << nb_exceptions << " (" << (done*100/nb_exceptions) << "%)\n";
    }
 
 
@@ -388,7 +376,7 @@ void create_trajectories(char *dir) {
        * to avoid bugs when merging GTFS from different countries... */
       if(trip_id != last_trip_id) {
          first_stop_sequence = stop_sequence;
-	 last_trip_id = trip_id;
+         last_trip_id = trip_id;
       }
 
       /* Destination... */
@@ -406,22 +394,22 @@ void create_trajectories(char *dir) {
       /* Is the train/bus circulating on the chosen day? */
       Calendar *info = calendar[t->service_id];
       if(!info)
-	      goto skip;
+         goto skip;
       if(!t->is_train && trains_only)
-	      goto skip; 
+         goto skip; 
       if(!info->scheduled_on_chosen_date)
-	      goto skip;
+         goto skip;
       if(info->cancelled_on_chosen_date)
-	      goto skip;
-      //if(is_frequently_cancelled(info)) // Do not used cancelled trains in sssp
-      //   goto skip;
+         goto skip;
+      if(is_frequently_cancelled(info)) // Do not used cancelled trains in sssp
+         goto skip;
 
       if(stop_sequence != first_stop_sequence && parent) {
          int current_time = string_to_time(arrival_time);
          int travel_time = current_time - previous_time;
          if(travel_time < 0) {
             //cout << previous_time << " " << current_time << "\n";
-	    skipped++;
+            skipped++;
             continue;
          }
          add_edge(parent->id, current->id, travel_time, previous_time, trip_id);
@@ -466,77 +454,62 @@ void create_transfers(char *dir) {
 void create_walks(void) {
    size_t nb_loops = stop_ids.size(), done = 0, prev_percent = 0;
 
-   // Create a sorted list
+   // Create a list of Stops sorted by latitude
    for (auto it1 = stop_ids.begin(); it1 != stop_ids.end(); ++it1) {
-	   stops_sorted_by_lat.push_back(it1->second);
+      stops_sorted_by_lat.push_back(it1->second);
    }
    stops_sorted_by_lat.sort([](auto a, auto b) { return a->stop_lat < b->stop_lat; });
 
    // For each stop, find other stops less than 100m away
    for (auto it1 = stops_sorted_by_lat.begin(); it1 != stops_sorted_by_lat.end(); ++it1) {
-	   Stop *s1 = *it1;
-	   //cout << "Doing stop " <<  s1->stop_lat << "\n";
-	   if(!s1->is_train && trains_only)
-		   continue;
-	   auto it2 = it1;
-	   it2--;
-	   if(it2 != stops_sorted_by_lat.begin()) {
-		   do {
-			   Stop *s2 = *it2;
-			   //cout << "\t 1 - with stop " <<  s2->stop_lat << " train " << s2->is_train << "\n";
-			   // 1deg = 110km, so no need to go further, all stops are > 100m
-			   if(s2->stop_lat < s1->stop_lat - 0.001)
-				   break;
-			   if(!s2->is_train && trains_only)
-				   continue; 
-			   double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
-			   if(dst < 100) { // less than 100m, add a walk path!
-				   add_edge(s1->id, s2->id, 2, -1, "");
-			   }
-		   } while(--it2 != stops_sorted_by_lat.begin());
-	   }
-	   it2 = it1;
-	   it2++;
-	   if(it2 != stops_sorted_by_lat.end()) {
-		   do {
-			   Stop *s2 = *it2;
-			   //cout << "\t 2 - with stop " <<  s2->stop_lat << "\n";
-			   // 1deg = 110km, so no need to go further, all stops are > 100m
-			   if(s2->stop_lat > s1->stop_lat + 0.001)
-				   break;
-			   if(!s2->is_train && trains_only)
-				   continue; 
-			   double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
-			   if(dst < 100) { // less than 100m, add a walk path!
-				   add_edge(s1->id, s2->id, 2, -1, "");
-			   }
-		   } while(++it2 != stops_sorted_by_lat.end());
-	   }
-	   done++;
-	   if(done*100/nb_loops != prev_percent) {
-		   prev_percent = done*100/nb_loops;
-		   cerr << "Adding walks " << done << "/" << nb_loops << " (" << (done * 100 / nb_loops) << "%)\n";
-	   }
-   }
-   /*size_t nb_loops = stop_ids.size() * stop_ids.size(), done = 0;
-   for (auto it1 = stop_ids.begin(); it1 != stop_ids.end(); ++it1) {
-      for (auto it2 = stop_ids.begin(); it2 != stop_ids.end(); ++it2) {
-         Stop *s1 = it1->second;
-         Stop *s2 = it2->second;
-         if(s1 == s2)
-            continue;
-	 if((!s1->is_train || !s2->is_train) && trains_only)
-            continue; 
-         double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
-         if(dst < 100) { // less than 100m
-                         // add a walk path!
-            add_edge(s1->id, s2->id, 2, -1, "");
-         }
-         done++;
-         if(done % 1000000 == 0)
-            cout << "Adding walks " << done << "/" << nb_loops << " (" << (done * 100 / nb_loops) << "%)\n";
+      Stop *s1 = *it1;
+      //cout << "Doing stop " <<  s1->stop_lat << "\n";
+      if(!s1->is_train && trains_only)
+         continue;
+
+      // Find other stops with a lower latitude (but not too far)
+      auto it2 = it1;
+      it2--;
+      if(it2 != stops_sorted_by_lat.begin()) {
+         do {
+            Stop *s2 = *it2;
+            //cout << "\t 1 - with stop " <<  s2->stop_lat << " train " << s2->is_train << "\n";
+            // 1deg = 110km, so no need to go further, all stops are > 100m
+            if(s2->stop_lat < s1->stop_lat - 0.001)
+               break;
+            if(!s2->is_train && trains_only)
+               continue; 
+            double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
+            if(dst < 100) { // less than 100m, add a walk path!
+               add_edge(s1->id, s2->id, 2, -1, "");
+            }
+         } while(--it2 != stops_sorted_by_lat.begin());
       }
-   }*/
+
+      // And above us (but not too far)
+      it2 = it1;
+      it2++;
+      if(it2 != stops_sorted_by_lat.end()) {
+         do {
+            Stop *s2 = *it2;
+            //cout << "\t 2 - with stop " <<  s2->stop_lat << "\n";
+            // 1deg = 110km, so no need to go further, all stops are > 100m
+            if(s2->stop_lat > s1->stop_lat + 0.001)
+               break;
+            if(!s2->is_train && trains_only)
+               continue; 
+            double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
+            if(dst < 100) { // less than 100m, add a walk path!
+               add_edge(s1->id, s2->id, 2, -1, "");
+            }
+         } while(++it2 != stops_sorted_by_lat.end());
+      }
+      done++;
+      if(done*100/nb_loops != prev_percent) {
+         prev_percent = done*100/nb_loops;
+         cerr << "Adding walks " << done << "/" << nb_loops << " (" << (done * 100 / nb_loops) << "%)\n";
+      }
+   }
 }
 
 // Is a stop near to a train station?
@@ -561,9 +534,10 @@ int is_close_to_train(Stop *s) {
 int _add_connection(Stop *dst, Source *f) {
    for (auto it = dst->parents.begin(); it != dst->parents.end(); ++it) {
       Source *e = *it;
+      // Two trains arrive at the same time...
       if(e->arrival_time == f->arrival_time) {
          if(e->travel_time <= f->travel_time) {
-            // ignore f
+            // New path takes longer to get there, ignore it
          } else {
             // found a shorter way that arrives at the same time!
             assert(e->child == dst);
@@ -627,7 +601,7 @@ void __sssp(Stop *src, int iteration) {
 
       Source *f = NULL;
       if(e->departure_time == -1) { // we can use that edge whenever (foot/bike transfer)
-         // So push the edge for all transfers that end up in src
+                                    // So push the edge for all transfers that end up in src
          for (auto it = src->parents.begin(); it != src->parents.end(); ++it) {
             Source *parent = *it;
 
@@ -663,7 +637,7 @@ void __sssp(Stop *src, int iteration) {
             // Ignore impossible connections
             if(e->departure_time < parent->arrival_time)
                continue;
-            // Same platform, but different train, we need at least a bit of time to switch
+            // Same station, but different train, we need at least a bit of time to switch
             if(parent->edge && e->departure_time == parent->arrival_time && e->trip_id != parent->edge->trip_id)
                continue;
 
@@ -689,18 +663,6 @@ void __sssp(Stop *src, int iteration) {
          f->best = best;
          f->walking = 0;
          f->edge = e;
-
-         if(dst->stop_name == "Thun") {
-            if(src->stop_name == "Bern") {
-               //cout << "[DST] Adding a connection from " << src->stop_name <<  " to " << dst->stop_name << " arriving " << h(f->arrival_time) << " total " << h(f->travel_time) << " before " << h(best->travel_time) << " + wait = " << h(best_time) << " arrived at " << h(best->arrival_time) << " edge: " << h(e->departure_time) << " + " << h(e->travel_time) <<  "trip id " << e->trip_id << "\n";
-               }
-         }
-         if(dst->stop_name == "Bern") {
-            if(src->stop_name == "Kerzers") {
-               //cout << "[DST] Adding a connection from " << src->stop_name <<  " to " << dst->stop_name << " arriving " << h(f->arrival_time) << " total " << h(f->travel_time) << " before " << h(best->travel_time) << " + wait = " << h(best_time) << " arrived at " << h(best->arrival_time) << " edge: " << h(e->departure_time) << " + " << h(e->travel_time) <<  "trip id " << e->trip_id << "\n";
-               }
-         }
-
          add_connection(dst, f, iteration);
       }
    }
@@ -730,23 +692,23 @@ void _sssp(int iterations) {
 }
 
 /* Trajectories already outputed */
-std::map<std::pair<string,string>,int> seen_railways;
-void output_railway(Source *f) {
-	if(!f)
-		return;
-	Stop *dst = f->child;
-	if(!dst)
-		return;
-	Stop *src = f->parent;
-	if(!src)
-		return;
+std::map<std::pair<string,string>,int> seen_stops;
+void output_stop(Source *f) {
+   if(!f)
+      return;
+   Stop *dst = f->child;
+   if(!dst)
+      return;
+   Stop *src = f->parent;
+   if(!src)
+      return;
 
-	if(seen_railways[{dst->stop_name,src->stop_name}])
-		return;
+   if(seen_stops[{dst->stop_name,src->stop_name}])
+      return;
 
-	seen_railways[{dst->stop_name,src->stop_name}] = 1;
-	cout << "{ dst:\"" << dst->stop_name << "\", dsttrain:" << dst->is_train <<", dstlat:" << dst->stop_lat << ", dstlon:" << dst->stop_lon << ", src:\"" << src->stop_name << "\", srclat:" << src->stop_lat << ", srclon:" << src->stop_lon<< ", dur:" << f->travel_time << " },\n";
-	output_railway(f->best);
+   seen_stops[{dst->stop_name,src->stop_name}] = 1;
+   cout << "{ dst:\"" << dst->stop_name << "\", dsttrain:" << dst->is_train <<", dstlat:" << dst->stop_lat << ", dstlon:" << dst->stop_lon << ", src:\"" << src->stop_name << "\", srclat:" << src->stop_lat << ", srclon:" << src->stop_lon<< ", dur:" << f->travel_time << " },\n";
+   output_stop(f->best); // Probably uneeded
 }
 
 int sssp(string origin) {
@@ -789,9 +751,7 @@ int sssp(string origin) {
    for (auto it = dst.begin(); it != dst.end(); ++it) {
       Stop *s = it->second;
       if(s->best_time > 0 && !is_close_to_train(s) && (!trains_only || s->is_train)) {
-         //cout << s->stop_name << " in " << s->best_time << " minutes\n";
-         //cout << "{ name:\"" << s->stop_name << "\", lat:" << s->stop_lat << ", lon:" << s->stop_lon << ", dur:" << s->best_time << " },\n";
-	 output_railway(s->best_source);
+         output_stop(s->best_source);
       }
    }
    cout << "]\n";
@@ -837,12 +797,15 @@ void best_path(string d) {
 }
 
 int main(int argc, char **argv) {
-   if(argc < 2) {
-      cout << "Usage: parse <directory containing gtfs data> <stop name>\n";
+   if(argc < 4) {
+      cout << "Usage: parse <directory containing gtfs data> <stop name> <YYYYmmdd> <trains only?>\n";
       cout << "\tWill compute the shortest travel time from <stop name> to all other stops in the GTFS dataset\n";
-      cout << "\tE.g.: ./parse . Lausanne\n";
+      cout << "\tE.g.: ./parse ./swiss_gtfs Lausanne 20221119 1\n";
+      cout << "\tE.g.: ./parse ./german_gtfs \"München Hbf\" 20230130 0\n";
       return -1;
    }
+   chosen_day = _ + argv[3];
+   trains_only = atoi(argv[4]);
 
    // Parse stops.txt and return the Stop object corresponding to <stop name>
    create_stops(argv[1]);
