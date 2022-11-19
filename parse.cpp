@@ -32,6 +32,7 @@ struct Stop {
    double stop_lat,stop_lon; // Latitude, Longitude
 
    int is_train;
+   int is_close_to_train;
 
    int nb_hops;      // number of stops crossed to get there (stops, not train changes)
    int best_time;    // in minutes
@@ -513,22 +514,62 @@ void create_walks(void) {
 }
 
 // Is a stop near to a train station?
-// If so, it will not be printed out in the results because we want to keep the number of stops low...
-int is_close_to_train(Stop *s) {
-   if(!simplify_results)
-      return 0;
-   if(s->is_train) // no train station is really close to another one... and even if it is, we want to keep all of them
-      return 0;
+// If so, it will not be printed out in the results because we don't want to clutter the map
+// Logic of the code is similar to adding walks in create_walks
+void fill_is_close_to_train(void) {
+   size_t nb_loops = stop_ids.size(), done = 0, prev_percent = 0;
+   for (auto it1 = stops_sorted_by_lat.begin(); it1 != stops_sorted_by_lat.end(); ++it1) {
+      Stop *s1 = *it1;
+      s1->is_close_to_train = 0;
 
-   for (auto it = stop_ids.begin(); it != stop_ids.end(); ++it) {
-      Stop *other = it->second;
-      if(!other->is_train)
+      // a train is never close to another and we want to keep all of them
+      if(s1->is_train)
          continue;
-      double dst = distanceEarth(s->stop_lat, s->stop_lon, other->stop_lat, other->stop_lon);
-      if(dst < 2000) // less than 2km from a train station
-         return 1;
+
+      // Find other stops with a lower latitude (but not too far)
+      auto it2 = it1;
+      it2--;
+      if(it1 != stops_sorted_by_lat.begin()) {
+         do {
+            Stop *s2 = *it2;
+            if(s2->stop_lat < s1->stop_lat - 0.02) // has to be more than 2km away
+               break;
+            if(s2->is_train) {
+               double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
+               if(dst < 2000) { // less than 2km
+                  s1->is_close_to_train = 1;
+                  goto end;
+               }
+            }
+         } while(it2-- != stops_sorted_by_lat.begin());
+      }
+
+      // And above us (but not too far)
+      it2 = it1;
+      it2++;
+      if(it1 != stops_sorted_by_lat.end() && it2 != stops_sorted_by_lat.end()) {
+         do {
+            Stop *s2 = *it2;
+            //cout << "\t 2 - with stop " <<  s2->stop_lat << "\n";
+            // 1deg = 110km, so no need to go further, all stops are > 100m
+            if(s2->stop_lat > s1->stop_lat + 0.02)
+               break;
+            if(s2->is_train) {
+               double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
+               if(dst < 2000) { // less than 2km
+                  s1->is_close_to_train = 1;
+                  goto end;
+               }
+            }
+         } while(++it2 != stops_sorted_by_lat.end());
+      }
+end:
+      done++;
+      if(done*100/nb_loops != prev_percent) {
+         prev_percent = done*100/nb_loops;
+         cerr << "Checking proximity with trains " << done << "/" << nb_loops << " (" << (done * 100 / nb_loops) << "%)\n";
+      }
    }
-   return 0;
 }
 
 int _add_connection(Stop *dst, Source *f) {
@@ -692,7 +733,6 @@ void _sssp(int iterations) {
 }
 
 /* Trajectories already outputed */
-std::map<std::pair<string,string>,int> seen_stops;
 void output_stop(Source *f) {
    if(!f)
       return;
@@ -703,12 +743,7 @@ void output_stop(Source *f) {
    if(!src)
       return;
 
-   if(seen_stops[{dst->stop_name,src->stop_name}])
-      return;
-
-   seen_stops[{dst->stop_name,src->stop_name}] = 1;
    cout << "{ dst:\"" << dst->stop_name << "\", dsttrain:" << dst->is_train <<", dstlat:" << dst->stop_lat << ", dstlon:" << dst->stop_lon << ", src:\"" << src->stop_name << "\", srctrain:" << src->is_train << ", srclat:" << src->stop_lat << ", srclon:" << src->stop_lon<< ", dur:" << f->travel_time << " },\n";
-   output_stop(f->best); // Probably uneeded
 }
 
 int sssp(string origin) {
@@ -747,10 +782,12 @@ int sssp(string origin) {
       dst.push_back({s->best_time, s});
    }
    std::sort(dst.begin(), dst.end()); // sort by time
+   if(simplify_results)
+      fill_is_close_to_train();
    cout << "[ ";
    for (auto it = dst.begin(); it != dst.end(); ++it) {
       Stop *s = it->second;
-      if(s->best_time > 0 && !is_close_to_train(s) && (!trains_only || s->is_train)) {
+      if(s->best_time > 0 && (!simplify_results || !s->is_close_to_train) && (!trains_only || s->is_train)) {
          output_stop(s->best_source);
       }
    }
