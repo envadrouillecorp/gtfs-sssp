@@ -33,13 +33,13 @@ sub get_json {
 
 # Foreach stop
 my $is_first = 1;
-my ($index, $prev_percent, $total) = (0, 0, scalar(@$stops));
+my ($done, $index, $prev_percent, $total) = (0, 0, 0, scalar(@$stops));
 foreach my $stop (@$stops) {
 	#{ dst:"Nîmes", dstlat:43.8324, dstlon:4.36617, src:"St-Geniès-de-Malgoirès", srclat:43.9502, srclon:4.21494, dur:872 },
 	my ($url,$json,$dist,$best_dist,$best_coords);
 
    # Only color railways
-   next if(!$stop->{dsttrain} || !$stop->{srctrain});
+   goto SKIP if(!$stop->{dsttrain} || !$stop->{srctrain});
        
 	# Get the path
 	$url = sprintf($routeosmr, $stop->{srclon}, $stop->{srclat}, $stop->{dstlon}, $stop->{dstlat});
@@ -76,19 +76,21 @@ foreach my $stop (@$stops) {
 			}
 		}
 	}
-
-   $index++;
-   if(int($index*100/$total) != $prev_percent) {
-      $prev_percent = int($index*100/$total);
-      print STDERR "Finding railways geometry ($prev_percent%)\n";
-   }
-	next if(!$best_coords);
 	
+	goto SKIP if(!$best_coords);
 	if(!$is_first) {
 		print ",\n";
 	} else {
 		$is_first = 0;
 	}
 	print '{ "type": "Feature", "properties": { "dst": "'.$stop->{dst}.'", "src": "'.$stop->{src}.'", "dur": '.$stop->{dur}.' }, "geometry": { "coordinates": '.encode_json($best_coords).', "type": "LineString" } } ';
+
+
+SKIP:
+   $index++;
+   if(int($index*100/$total) != $prev_percent) {
+      $prev_percent = int($index*100/$total);
+      print STDERR "Finding railways geometry ($prev_percent%)\n";
+   }
 }
 say '], "type": "FeatureCollection" }';

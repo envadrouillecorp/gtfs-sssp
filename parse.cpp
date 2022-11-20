@@ -113,7 +113,7 @@ std::string exec(string cmd) {
 }
 
 /* stops.txt => Stop objects */
-void create_stops(char *dir) {
+void create_stops(char *dir, char *origin) {
    string stop_file_name = _ + dir + "/stops.txt";
    io::CSVReader<4, trim_chars<' ', '\t'>, double_quote_escape<',','\"'> > in(stop_file_name);
    in.read_header(io::ignore_extra_column, "stop_id", "stop_name", "stop_lat", "stop_lon");
@@ -139,6 +139,23 @@ void create_stops(char *dir) {
       stop_names[stop_name]->push_back(s);
       nb_stops++;
       stops[stop_id] = s;
+   }
+
+   if(!stop_names[origin]) {
+      cerr << "Origin stop '" << origin << "' doesn't exist\n";
+      exit(-1);
+   }
+   for(auto s1: *stop_names[origin]) {
+      for(auto s2: *stop_names[origin]) {
+         double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
+         if(dst > 1000) { // Start stop is twice in the dataset at very different places!
+            cerr << "Origin stop '" << origin << "' is present at very different locations, edit stops.txt\n";
+            cerr << "\t Stop found at " << s1->stop_lat << "," << s1->stop_lon << "\n";
+            cerr << "\t And           " << s2->stop_lat << "," << s2->stop_lon << "\n";
+            cerr << "\t Which are " << (dst/1000.0) << "km away!\n";
+            exit(-1);
+         }
+      }
    }
 }
 
@@ -323,6 +340,14 @@ void init_vertices(void) {
 void add_edge(int v, int dst, int travel_time, int departure_time, string trip_id) {
    assert(v < nb_stops);
    int index = vertices[v].nb_edges;
+   if(trip_id == "67A_17_4_6226M_011014") {
+      cout << "Trip 67A_17_4_6226M_011014 " << stop_ids[v]->stop_name << " -> " << stop_ids[dst]->stop_name << "\n";
+      cout << "\tTrip 67A_17_4_6226M_011014 " << stop_ids[v]->stop_id << " -> " << stop_ids[dst]->stop_id << "\n";
+   }
+   if(stop_ids[dst]->stop_name == "Dauphiné - Berlioz") {
+      cout << "Adding an edge to Dauphiné from " << stop_ids[v]->stop_name << " trip id " << trip_id << " travel_time " << travel_time << " departure_time " << departure_time << "\n";
+      cout << "\tIDS " << stop_ids[v]->stop_id << " -> " << stop_ids[dst]->stop_id << "\n";
+   }
    for(int i = 0; i < index; i++) {
       if(vertices[v].edges[i].dst == dst
             && vertices[v].edges[i].departure_time == departure_time) {
@@ -757,11 +782,6 @@ int sssp(string origin) {
    s->child = NULL;
    s->edge = NULL;
 
-   if(!stop_names[origin]) {
-      cerr << "Origin stop '" << origin << "' doesn't exist\n";
-      return 0;
-   }
-
    // Start from all the platforms of origin (possible if it's a train)
    for(auto src: *stop_names[origin]) {
       src->parents.push_back(s);
@@ -845,7 +865,7 @@ int main(int argc, char **argv) {
    trains_only = atoi(argv[4]);
 
    // Parse stops.txt and return the Stop object corresponding to <stop name>
-   create_stops(argv[1]);
+   create_stops(argv[1], argv[2]);
 
    // routes.txt
    create_routes(argv[1]);
@@ -880,4 +900,5 @@ int main(int argc, char **argv) {
    best_path("Kandersteg");
    best_path("Oey-Diemtigen");
    best_path("Bantzenheim");
+   best_path("Lyon Perrache");
 }
