@@ -340,14 +340,6 @@ void init_vertices(void) {
 void add_edge(int v, int dst, int travel_time, int departure_time, string trip_id) {
    assert(v < nb_stops);
    int index = vertices[v].nb_edges;
-   if(trip_id == "67A_17_4_6226M_011014") {
-      cout << "Trip 67A_17_4_6226M_011014 " << stop_ids[v]->stop_name << " -> " << stop_ids[dst]->stop_name << "\n";
-      cout << "\tTrip 67A_17_4_6226M_011014 " << stop_ids[v]->stop_id << " -> " << stop_ids[dst]->stop_id << "\n";
-   }
-   if(stop_ids[dst]->stop_name == "Dauphiné - Berlioz") {
-      cout << "Adding an edge to Dauphiné from " << stop_ids[v]->stop_name << " trip id " << trip_id << " travel_time " << travel_time << " departure_time " << departure_time << "\n";
-      cout << "\tIDS " << stop_ids[v]->stop_id << " -> " << stop_ids[dst]->stop_id << "\n";
-   }
    for(int i = 0; i < index; i++) {
       if(vertices[v].edges[i].dst == dst
             && vertices[v].edges[i].departure_time == departure_time) {
