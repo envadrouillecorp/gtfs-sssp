@@ -379,7 +379,6 @@ void create_trajectories(char *dir) {
    Stop *parent = NULL;
    int previous_time = 0;
    size_t nb_trajectories = stol(exec(_ + "wc -l \"" + trip_file_name + "\""));
-   size_t skipped = 0;
    size_t first_stop_sequence = -1;
    string last_trip_id = "";
    while(in.read_row(trip_id, arrival_time, departure_time, stop_id, stop_sequence)) {
@@ -425,11 +424,9 @@ void create_trajectories(char *dir) {
       if(stop_sequence != first_stop_sequence && parent) {
          int current_time = string_to_time(arrival_time);
          int travel_time = current_time - previous_time;
-         if(travel_time < 0) {
-            //cout << previous_time << " " << current_time << "\n";
-            skipped++;
-            continue;
-         }
+         assert(travel_time >= 0);
+         if(travel_time == 0)
+            travel_time = 1; // avoid infinite loops
          add_edge(parent->id, current->id, travel_time, previous_time, trip_id);
       }
 
@@ -444,7 +441,6 @@ skip:
       if(nb_trips % 300000 == 0)
          cerr << "Adding trajectories " << nb_trips << "/"<< nb_trajectories << " (" << (nb_trips*100/nb_trajectories) << "%)\n";
    }
-   cerr << "SKIPPED " << skipped << " trajectories due to negative travel times...\n";
 }
 
 void create_transfers(char *dir) {
@@ -464,6 +460,8 @@ void create_transfers(char *dir) {
       Stop *dst = stops[to_stop_id];
       if(parent == dst)
          continue;
+      if(min_transfer_time < 60)
+         min_transfer_time = 60; // add at least a minute of walking
       if(dst->is_train || !trains_only)
          add_edge(parent->id, dst->id, min_transfer_time/60, -1, string(""));
    }
@@ -618,7 +616,7 @@ int _add_connection(Stop *dst, Source *f) {
 }
 
 /* Add a connection to a vertex -- dst can be reached from the Source f */
-void add_connection(Stop *dst, Source *f, int iteration) {
+void add_connection(Stop *dst, Source *f, int iteration, int print) {
    // Did we find the best time?
    if(dst->best_time == -1 || dst->best_time > f->travel_time) {
       dst->best_time = f->travel_time;
@@ -628,17 +626,27 @@ void add_connection(Stop *dst, Source *f, int iteration) {
 
    // Add the trajectory to the list of possible trajectories if it is close the the best (less than 60 minutes worse than best)
    if(f->travel_time < dst->best_time + 60 && f->travel_time < dst->best_time * 2) {
-      /*cout << "Found connection " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
-        << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
-        << " departure at " << h(best->arrival_time) << " takes " << h(f->travel_time) << " because edge travel is " << h(e->travel_time)
-        << " so far " << dst->parents.size() << " trajectories " << "\n";*/
+      if(print) {
+         cout << "Found connection " << f->parent->stop_name << " -> " << dst->stop_name << " at " << h(f->departure_time) << " arrive " << h(f->arrival_time)
+            << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
+            << " so far " << dst->parents.size() << " trajectories " << "\n";
+      }
       int already_there = _add_connection(dst, f);
       if(already_there && dst->best_source != f)
          delete f;
+      if(print) {
+         cout << "Was there " << already_there << "\n";
+         cout << "Now " << dst->parents.size() << " trajectories " << "\n";
+         for(auto *s: dst->parents) {
+            cout << "Current to " << dst->stop_name << " arrival at " << h(s->arrival_time) << " in " << h(s->travel_time) << "\n";
+         }
+     }
    } else {
-      /*cout << "Ignoring connection " << src->stop_name << " -> " << dst->stop_name << " at " << h(e->departure_time)
-        << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
-        << " so far " << dst->parents.size() << " trajectories " << "\n";*/
+      if(print) {
+         cout << "Ignoring connection " << f->child->stop_name << " -> " << dst->stop_name << " at " << h(f->departure_time)
+            << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
+            << " so far " << dst->parents.size() << " trajectories " << "\n";
+      }
       assert(dst->best_source != f);
       delete f;
    }
@@ -677,7 +685,7 @@ void __sssp(Stop *src, int iteration) {
             f->best = parent;
             f->walking = 1;
             f->edge = e;
-            add_connection(dst, f, iteration);
+            add_connection(dst, f, iteration, 0);
          }
       } else {
          Source *best = NULL;
@@ -695,8 +703,8 @@ void __sssp(Stop *src, int iteration) {
             // Ignore impossible connections
             if(e->departure_time < parent->arrival_time)
                continue;
-            // Same station, but different train, we need at least a bit of time to switch
-            if(parent->edge && e->departure_time == parent->arrival_time && e->trip_id != parent->edge->trip_id)
+            // Same station, but different train, we need at least a bit of time to switch unless we walked to get there
+            if(parent->edge && parent->edge->departure_time != -1 && e->departure_time == parent->arrival_time && e->trip_id != parent->edge->trip_id)
                continue;
 
             // Time to reach destination is time already spent traveling + waiting time
@@ -721,7 +729,8 @@ void __sssp(Stop *src, int iteration) {
          f->best = best;
          f->walking = 0;
          f->edge = e;
-         add_connection(dst, f, iteration);
+         add_connection(dst, f, iteration, 0);
+
       }
    }
 }
@@ -831,16 +840,8 @@ void best_path(string d) {
 
    Source *f = dst->best_source;
    while(f) {
-      cerr << "Arrival in " << dst->stop_name << " (NAME " << (f->child?f->child->stop_name:"") << " ID " << (f->child?f->child->stop_id:"") << " TRAIN " << dst->is_train <<") at " << h(f->arrival_time) << " in total " << h(f->travel_time) << "\n";
+      cerr << "Arrival in " << (f->child?f->child->stop_name:"") << " ID " << (f->child?f->child->stop_id:"") << " TRAIN " << dst->is_train <<") at " << h(f->arrival_time) << " in total " << h(f->travel_time) << "\n";
       cerr << "\tDeparture from " << (f->parent?f->parent->stop_name:"") << " (ID " << (f->parent?f->parent->stop_id:"") << ") at " << h(f->departure_time) << (f->walking?"walking":"transport") << "\n";
-      if(f->edge) {
-         Trip *trip = trips[f->edge->trip_id];
-         if(trip) {
-            Calendar *info = calendar[trip->service_id];
-            cerr << "\tUsing trip_id " << (f->edge->trip_id) << " cancelled " << (info?info->nb_cancellations:-1) << "/"  << (info?info->nb_expected:-1) << " trips\n";
-         }
-      }
-      dst = f->parent;
       f = f->best;
    }
 }
@@ -893,4 +894,7 @@ int main(int argc, char **argv) {
    best_path("Oey-Diemtigen");
    best_path("Bantzenheim");
    best_path("Lyon Perrache");
+   best_path("Vouvry");
+   best_path("Lausanne");
+   best_path("St-Maurice");
 }
