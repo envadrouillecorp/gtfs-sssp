@@ -4,7 +4,7 @@ export MAPBOX_ACCESS_TOKEN=""
 export mapbox_username=blepers
 
 city="Neuchâtel"
-date=20221119
+date=20221124
 gtfs_dir="./swiss"
 tileset_id="swiss-neuch"
 
@@ -16,7 +16,7 @@ echo "Getting the shape of the railways (may take a long time)...\n";
 
 echo "Formatting station times...\n";
 ./output-stations.pl ${tileset_id}.json > ${tileset_id}-stations.geojson
-
+exit;
 
 tileset_recipe="
 {

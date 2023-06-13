@@ -3,7 +3,7 @@
 CXXFLAGS=-std=gnu++14 -ggdb3
 LDLIBS=-lpthread
 
-parse:
+all: merge parse
 
 clean:
 	rm -f parse

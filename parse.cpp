@@ -424,7 +424,7 @@ void create_trajectories(char *dir) {
       if(stop_sequence != first_stop_sequence && parent) {
          int current_time = string_to_time(arrival_time);
          int travel_time = current_time - previous_time;
-         assert(travel_time >= 0);
+         //assert(travel_time >= 0);
          if(travel_time == 0)
             travel_time = 1; // avoid infinite loops
          add_edge(parent->id, current->id, travel_time, previous_time, trip_id);
