@@ -1,21 +1,11 @@
 # gtfs-sssp
 
-Compute the shortest path from a given train station to all other train stations in a GTFS data set.
+Go in the osm train repo and do make serve.
 
-## Usage
+Launch script.
 
-./parse "directory where GTFS files are" "train station"
+https://github.com/MobilityData/mobility-database-catalogs/tree/main/catalogs/sources/gtfs/schedule
 
-E.g.: ./parse . Lausanne
+Switzerland - https://opentransportdata.swiss/en/dataset/timetable-2023-gtfs2020
+Germany - https://gtfs.de/en/
 
-## Output
-
-The output will be a json file that can be used in map.html to create maps that look like that:
-
-![Lausanne](https://raw.githubusercontent.com/envadrouillecorp/gtfs-sssp/master/lausanne01.jpg)
-
-## Notes
-
-* Very inefficient code. It takes ~6 minutes on a powerful desktop to create the json file with Switzerland GTFS data. It does the job though...
-
-* The code automatically adds walk paths between train stations and nearby bus stops (and vice versa).
