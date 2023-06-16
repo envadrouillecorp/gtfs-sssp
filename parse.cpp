@@ -18,6 +18,7 @@ string chosen_day = ""; // YYYYmmdd
 int trains_only = 0; // Only parse trains
 const int simplify_results = 1; // if true remove bus stops less than 2km away from train station in the output
 const int exclude_frequently_cancelled_routes = 0; // exclude all routes cancelled more than 50\% of the time
+const int max_travel_time = 600; // 10h
 
 /* Previous stop in a trajectory, and used edge in the graph */
 struct Source;
@@ -380,21 +381,25 @@ void create_trajectories(char *dir) {
    int previous_time = 0;
    size_t nb_trajectories = stol(exec(_ + "wc -l \"" + trip_file_name + "\""));
    size_t first_stop_sequence = -1;
+   size_t last_stop_sequence = -1;
    string last_trip_id = "";
+   size_t line_number = 0;
    while(in.read_row(trip_id, arrival_time, departure_time, stop_id, stop_sequence)) {
+      line_number++;
+
       /* 
-       * stop_times.txt is a list of times for a given trip
-       * But the sequence either start at 1 (swiss) or 0 (germany)...
-       * We look at the first number of the file to known which one it is...
+       * stop_times.txt is a list of times for every trip
+       * Check if we are still on the same trip. If not, start a new one
        */
-      if(first_stop_sequence == -1)
-         first_stop_sequence = stop_sequence;
-      /* And, just in case, also reset it when we change trip id
-       * to avoid bugs when merging GTFS from different countries... */
       if(trip_id != last_trip_id) {
          first_stop_sequence = stop_sequence;
          last_trip_id = trip_id;
+      } else if(stop_sequence != last_stop_sequence + 1) {
+         // Same trip, we are expecting the next stop (sequence + 1)
+         // But some french datasets are completely nonsensical, just ignore the buggy trip fully
+         continue;
       }
+      last_stop_sequence = stop_sequence;
 
       /* Destination... */
       Stop *current = stops[stop_id];
@@ -424,16 +429,21 @@ void create_trajectories(char *dir) {
       if(stop_sequence != first_stop_sequence && parent) {
          int current_time = string_to_time(arrival_time);
          int travel_time = current_time - previous_time;
-         //assert(travel_time >= 0);
+         if(travel_time < 0) {
+            cerr << "Negative travel time " << travel_time << " from " << parent->stop_name << " at " << departure_time << " to " << current->stop_name << " arrival at " << arrival_time << "(" << current_time << ") previous time was " << previous_time << "(" << h(previous_time) << ") line " << line_number << "\n";
+            last_stop_sequence = -1; // ignore the rest of the trip
+            goto skip;
+         }
          if(travel_time == 0)
-            travel_time = 1; // avoid infinite loops
+            travel_time = 1; // avoid infinite loops, in some datasets it takes 30 seconds between 2 stops, but we compute at the minute resolution, so artificially bump the travel time!
          add_edge(parent->id, current->id, travel_time, previous_time, trip_id);
       }
 
       parent = current;
       previous_time = string_to_time(departure_time);
       if(departure_time < arrival_time) {
-         cerr << departure_time << " is before " << arrival_time << "\n";
+         cerr << departure_time << " is before " << arrival_time << " to " << current->stop_name << " line " << line_number << "\n";
+         last_stop_sequence = -1; // ignore the rest of the trip
       }
 
 skip:
@@ -458,6 +468,8 @@ void create_transfers(char *dir) {
    while(in.read_row(from_stop_id, to_stop_id, min_transfer_time)) {
       Stop *parent = stops[from_stop_id];
       Stop *dst = stops[to_stop_id];
+      if(!parent || !dst)
+         continue;
       if(parent == dst)
          continue;
       if(min_transfer_time < 60)
@@ -497,6 +509,8 @@ void create_walks(void) {
                continue; 
             double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
             if(dst < 100) { // less than 100m, add a walk path!
+                            //if(s1->stop_name == "Bern, Hauptbahnhof") 
+                            //cout << s1->stop_name << "walk to " << s2->stop_name << "\n";
                add_edge(s1->id, s2->id, 2, -1, "");
             }
          } while(it2-- != stops_sorted_by_lat.begin());
@@ -516,6 +530,8 @@ void create_walks(void) {
                continue; 
             double dst = distanceEarth(s1->stop_lat, s1->stop_lon, s2->stop_lat, s2->stop_lon);
             if(dst < 100) { // less than 100m, add a walk path!
+                            //if(s1->stop_name == "Bern, Hauptbahnhof") 
+                            //cout << s1->stop_name << "walk to " << s2->stop_name << "\n";
                add_edge(s1->id, s2->id, 2, -1, "");
             }
          } while(++it2 != stops_sorted_by_lat.end());
@@ -594,7 +610,7 @@ int _add_connection(Stop *dst, Source *f) {
       if(e->arrival_time == f->arrival_time) {
          if(e->travel_time <= f->travel_time) {
             // New path takes longer to get there, ignore it
-         } else {
+         } else if(f->travel_time <= max_travel_time) { // Only add stuff less than 10h away
             // found a shorter way that arrives at the same time!
             assert(e->child == dst);
             e->parent = f->parent;
@@ -647,8 +663,8 @@ void add_connection(Stop *dst, Source *f, int iteration, int print) {
             << " best " << h(dst->best_time) << " ours " << h(f->travel_time)
             << " so far " << dst->parents.size() << " trajectories " << "\n";
       }
-      assert(dst->best_source != f);
-      delete f;
+      if(dst->best_source != f)
+         delete f;
    }
 }
 
@@ -808,7 +824,7 @@ int sssp(string origin) {
    cout << "[ ";
    for (auto it = dst.begin(); it != dst.end(); ++it) {
       Stop *s = it->second;
-      if(s->best_time > 0 && (!simplify_results || !s->is_close_to_train) && (!trains_only || s->is_train)) {
+      if(s->best_time > 0 && s->best_time < max_travel_time && (!simplify_results || !s->is_close_to_train) && (!trains_only || s->is_train)) {
          output_stop(s->best_source);
       }
    }
@@ -897,4 +913,5 @@ int main(int argc, char **argv) {
    best_path("Vouvry");
    best_path("Lausanne");
    best_path("St-Maurice");
+   best_path("Beaulieu INSA");
 }
