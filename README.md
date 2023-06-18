@@ -24,6 +24,8 @@ To generate the shortest times you need ~10GB of free space. To generate the map
 
 If you want to generate the shortest pathes for a specific country you need 3-4GB of DRAM. If you want to generate the shortest pathes for the whole of Europe, it's more in the range of 10-15GB.
 
+## Generate the shortest pathes
+
 ### Get the train and bus schedules
 
 The GFTS datasets can be found here:
@@ -218,6 +220,7 @@ E.g.:
 
 The "username.tileset" value is the one found when making the tileset public (see above).
 
+## Enjoy
 
 That's it! Feel free to send me new isochrones to add on the demo map!
 
