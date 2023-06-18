@@ -6,4 +6,4 @@ LDLIBS=-lpthread
 all: merge parse
 
 clean:
-	rm -f parse
+	rm -f parse merge
