@@ -1,10 +1,10 @@
 #/bin/bash
 
 export MAPBOX_ACCESS_TOKEN=""
-export mapbox_username=blepers
+export mapbox_username=  # your mapbox username
 
 city="Neuchâtel"
-date=20221124
+date=20221124 # Make sure it is a current date! E.g., if you read this file in 2025, at least a date in 2025!
 gtfs_dir="./swiss"
 tileset_id="swiss-neuch"
 
@@ -16,7 +16,6 @@ echo "Getting the shape of the railways (may take a long time)...\n";
 
 echo "Formatting station times...\n";
 ./output-stations.pl ${tileset_id}.json > ${tileset_id}-stations.geojson
-exit;
 
 tileset_recipe="
 {
@@ -25,7 +24,7 @@ tileset_recipe="
     \"${tileset_id}-rails\": {
       \"source\": \"mapbox://tileset-source/${mapbox_username}/${tileset_id}-rails\",
       \"minzoom\": 1,
-      \"maxzoom\": 11
+      \"maxzoom\": 10
     }
   }
 }
@@ -44,8 +43,8 @@ tileset_recipe="
     \"${tileset_id}-stations\": {
       \"source\": \"mapbox://tileset-source/${mapbox_username}/${tileset_id}-stations\",
       \"minzoom\": 1,
-      \"maxzoom\": 11
-    }
+      \"maxzoom\": 10
+   }
   }
 }
 "

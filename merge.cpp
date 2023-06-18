@@ -33,7 +33,7 @@ void print_stops(char *dir) {
    double stop_lat, stop_lon;
    while(in.read_row(stop_id, stop_name, stop_lat, stop_lon)) {
       sanitize(&stop_name);
-      cout << "\"" << dir << stop_id << "\",\"" << stop_name << "\",\"" << stop_lat << "\",\"" << stop_lon << "\"\n";
+      cout << "\"" << dir << "-" << stop_id << "\",\"" << stop_name << "\",\"" << stop_lat << "\",\"" << stop_lon << "\"\n";
    }
 }
 
@@ -47,7 +47,7 @@ void print_routes(char *dir) {
    int route_type;
    string route_id;
    while(in.read_row(route_id, route_type)) {
-      cout << "\"" << dir << route_id << "\",\"" << route_type << "\"\n";
+      cout << "\"" << dir << "-" << route_id << "\",\"" << route_type << "\"\n";
    }
 }
 
@@ -60,7 +60,7 @@ void print_trips(char *dir) {
 
    string route_id, service_id, trip_id;
    while(in.read_row(route_id, service_id, trip_id)) {
-      cout << "\"" << dir << route_id << "\",\"" << dir << service_id << "\",\"" << dir << trip_id << "\"\n";
+      cout << "\"" << dir << "-" << route_id << "\",\"" << dir << "-" << service_id << "\",\"" << dir << "-" << trip_id << "\"\n";
    }
 }
 
@@ -76,7 +76,7 @@ void print_calendar(char *dir) {
 
    string service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date;
    while(in.read_row(service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)) {
-      cout << "\"" <<  dir << service_id << "\",\"" << monday << "\",\"" << tuesday << "\",\"" << wednesday << "\",\"" << thursday << "\",\"" << friday << "\",\"" << saturday << "\",\"" << sunday << "\",\"" << start_date << "\",\"" << end_date << "\"\n";
+      cout << "\"" <<  dir << "-" << service_id << "\",\"" << monday << "\",\"" << tuesday << "\",\"" << wednesday << "\",\"" << thursday << "\",\"" << friday << "\",\"" << saturday << "\",\"" << sunday << "\",\"" << start_date << "\",\"" << end_date << "\"\n";
    }
 }
 
@@ -87,7 +87,7 @@ void print_calendar_dates(char *dir) {
 
    string service_id, date, exception_type;
    while(in.read_row(service_id, date, exception_type)) {
-      cout << "\"" << dir << service_id << "\",\"" << date << "\",\"" << exception_type << "\"\n";
+      cout << "\"" << dir << "-" << service_id << "\",\"" << date << "\",\"" << exception_type << "\"\n";
    }
 }
 
@@ -101,7 +101,7 @@ void print_trajectories(char *dir) {
    size_t stop_sequence = 0;
 
    while(in.read_row(trip_id, arrival_time, departure_time, stop_id, stop_sequence)) {
-      cout << "\"" << dir << trip_id << "\",\"" << arrival_time << "\",\"" << departure_time << "\",\"" << dir << stop_id << "\",\"" << stop_sequence << "\"\n";
+      cout << "\"" << dir << "-" << trip_id << "\",\"" << arrival_time << "\",\"" << departure_time << "\",\"" << dir << "-" << stop_id << "\",\"" << stop_sequence << "\"\n";
    }
 }
 
@@ -118,7 +118,7 @@ void print_transfers(char *dir) {
    int min_transfer_time;
 
    while(in.read_row(from_stop_id, to_stop_id, min_transfer_time)) {
-      cout << "\"" << dir << from_stop_id << "\",\"" << dir << to_stop_id << "\",\"" << min_transfer_time << "\"\n";
+      cout << "\"" << dir << "-" << from_stop_id << "\",\"" << dir << "-" << to_stop_id << "\",\"" << min_transfer_time << "\"\n";
    }
 }
 

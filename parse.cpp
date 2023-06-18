@@ -914,4 +914,5 @@ int main(int argc, char **argv) {
    best_path("Lausanne");
    best_path("St-Maurice");
    best_path("Beaulieu INSA");
+   best_path("La Fouilleuse");
 }
